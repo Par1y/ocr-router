@@ -245,8 +245,8 @@ func fixJSON(s string) string {
 	s = regexp.MustCompile(`,\s*]`).ReplaceAllString(s, "]")
 	
 	// Fix unquoted keys (common in LLM outputs)
-	// Only match keys that are NOT already quoted
-	s = regexp.MustCompile(`(?<!")(\b\w+)\s*:`).ReplaceAllString(s, `"$1":`)
+	// Match: (non-quote or start) + unquoted-word + colon
+	s = regexp.MustCompile(`([^"\w]|^)(\w+)\s*:`).ReplaceAllString(s, `$1"$2":`)
 	
 	return s
 }

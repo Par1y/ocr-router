@@ -24,9 +24,11 @@ type Evaluator struct {
 
 // EvaluationRequest represents the evaluation request
 type EvaluationRequest struct {
-	Model    string       `json:"model"`
-	Messages []LLMMessage `json:"messages"`
-	MaxTokens int         `json:"max_tokens,omitempty"`
+	Model          string       `json:"model"`
+	Messages       []LLMMessage `json:"messages"`
+	MaxTokens      int          `json:"max_tokens,omitempty"`
+	Stream         bool         `json:"stream"`
+	ReasoningEffort string      `json:"reasoning_effort,omitempty"`
 }
 
 // EvaluationResponse represents the evaluation response
@@ -106,10 +108,16 @@ func (e *Evaluator) doEvaluate(ctx context.Context, ocrResult string) (*Evaluati
 		},
 	}
 
+	maxTokens := e.config.MaxTokens
+	if maxTokens <= 0 {
+		maxTokens = 4096
+	}
+
 	evalReq := EvaluationRequest{
-		Model:     e.config.Model,
-		Messages:  messages,
-		MaxTokens: 1024,
+		Model:          e.config.Model,
+		Messages:       messages,
+		MaxTokens:      maxTokens,
+		ReasoningEffort: e.config.ReasoningEffort,
 	}
 
 	// Marshal request
@@ -141,6 +149,19 @@ func (e *Evaluator) doEvaluate(ctx context.Context, ocrResult string) (*Evaluati
 		return nil, fmt.Errorf("failed to read response: %w", err)
 	}
 
+	// Log raw response for debugging (truncate if too large)
+	rawResponse := string(body)
+	if len(rawResponse) > 2000 {
+		rawResponse = rawResponse[:2000] + "...(truncated)"
+	}
+	e.logger.Debug("Evaluator: Raw API response", &logger.LogEntry{
+		Event: "evaluation_raw_response",
+		Extra: map[string]interface{}{
+			"status_code": resp.StatusCode,
+			"raw_response": rawResponse,
+		},
+	})
+
 	// Check status code
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("API error (status %d): %s", resp.StatusCode, string(body))
@@ -159,10 +180,19 @@ func (e *Evaluator) doEvaluate(ctx context.Context, ocrResult string) (*Evaluati
 
 	content := evalResp.Choices[0].Message.Content
 
+	if strings.TrimSpace(content) == "" {
+		rawLen := len(body)
+		if rawLen > 1000 {
+			rawLen = 1000
+		}
+		return nil, fmt.Errorf("content is empty, raw response: %s", string(body[:rawLen]))
+	}
+
 	e.logger.Debug("Evaluator: Raw response content", &logger.LogEntry{
 		Event: "evaluation_raw",
 		Extra: map[string]interface{}{
 			"content": content,
+			"message": evalResp.Choices[0].Message,
 		},
 	})
 

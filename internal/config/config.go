@@ -43,15 +43,17 @@ type ProviderConfig struct {
 }
 
 type EvaluatorConfig struct {
-	Enabled    bool          `yaml:"enabled"`
-	Endpoint   string        `yaml:"endpoint"`
-	APIKey     string        `yaml:"api_key"`
-	Model      string        `yaml:"model"`
-	Threshold  float64       `yaml:"threshold"`
-	MaxRetries int           `yaml:"max_retries"`
-	RetryDelay time.Duration `yaml:"retry_delay"`
-	Timeout    time.Duration `yaml:"timeout"`
-	Prompt     string        `yaml:"prompt"`
+	Enabled        bool          `yaml:"enabled"`
+	Endpoint       string        `yaml:"endpoint"`
+	APIKey         string        `yaml:"api_key"`
+	Model          string        `yaml:"model"`
+	Threshold      float64       `yaml:"threshold"`
+	MaxRetries     int           `yaml:"max_retries"`
+	RetryDelay     time.Duration `yaml:"retry_delay"`
+	Timeout        time.Duration `yaml:"timeout"`
+	Prompt         string        `yaml:"prompt"`
+	MaxTokens      int           `yaml:"max_tokens,omitempty"`
+	ReasoningEffort string       `yaml:"reasoning_effort,omitempty"`
 }
 
 type FallbackConfig struct {

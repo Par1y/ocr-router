@@ -21,7 +21,7 @@ providers:
     endpoint: "https://api.stepfun.com/step_plan/v1/chat/completions"
     model: "step-router-v1"
     prompt: "Extract all text from this image. Return only the text content."
-    max_tokens: 4096
+    max_tokens: 16384
 
   browser_sse:
     type: "browser_sse"
@@ -43,6 +43,8 @@ evaluator:
   max_retries: 3
   retry_delay: "1s"
   timeout: "30s"
+  max_tokens: 16384  # 思维链模型需要更多token给reasoning+content
+  reasoning_effort: "medium"  # low, medium, high - 控制模型推理深度
   prompt: |
     You are an OCR quality evaluator. Please evaluate the quality of the following OCR result.
 

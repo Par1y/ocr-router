@@ -1,0 +1,36 @@
+{{define "layout"}}
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>OCR System</title>
+    <link rel="stylesheet" href="/static/css/style.css">
+</head>
+<body>
+    <nav class="navbar">
+        <div class="container">
+            <a href="/" class="logo">OCR System</a>
+            <ul class="nav-links">
+                <li><a href="/">首页</a></li>
+                <li><a href="/submit">提交任务</a></li>
+                <li><a href="/batch">批量处理</a></li>
+                <li><a href="/providers">Provider状态</a></li>
+            </ul>
+        </div>
+    </nav>
+
+    <main class="container">
+        {{template "content" .}}
+    </main>
+
+    <footer class="footer">
+        <div class="container">
+            <p>OCR System - 多Provider支持、质量评估、自动回退</p>
+        </div>
+    </footer>
+
+    <script src="/static/js/app.js"></script>
+</body>
+</html>
+{{end}}

@@ -1,0 +1,42 @@
+{{define "content"}}
+<div class="page-header">
+    <h1>Provider状态</h1>
+</div>
+
+<div class="providers-container">
+    <div id="providers-list">
+        <p>加载中...</p>
+    </div>
+</div>
+
+<script>
+    fetch('/api/providers')
+        .then(response => response.json())
+        .then(data => {
+            let html = '<div class="provider-cards">';
+            
+            for (const [name, status] of Object.entries(data)) {
+                const statusClass = status.healthy ? 'status-ok' : 'status-error';
+                const statusText = status.healthy ? '正常' : '异常';
+                
+                html += `
+                    <div class="card provider-card">
+                        <h3>${name}</h3>
+                        <p>类型: ${status.type}</p>
+                        <p>状态: <span class="${statusClass}">${statusText}</span></p>
+                        <p>延迟: ${status.latency}</p>
+                        <p>检查时间: ${new Date(status.checked_at).toLocaleString()}</p>
+                        ${status.error ? `<p class="status-error">错误: ${status.error}</p>` : ''}
+                    </div>
+                `;
+            }
+            
+            html += '</div>';
+            document.getElementById('providers-list').innerHTML = html;
+        })
+        .catch(error => {
+            document.getElementById('providers-list').innerHTML = 
+                '<p class="status-error">无法获取Provider状态</p>';
+        });
+</script>
+{{end}}

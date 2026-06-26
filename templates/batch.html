@@ -1,0 +1,94 @@
+{{define "content"}}
+<div class="page-header">
+    <h1>批量处理</h1>
+</div>
+
+<div class="form-container">
+    <form id="batch-form">
+        <div class="form-group">
+            <label for="directory">目录路径</label>
+            <input type="text" id="directory" name="directory" required 
+                   placeholder="输入包含图片的目录路径">
+        </div>
+
+        <div class="form-group">
+            <label for="provider">Provider</label>
+            <select id="provider" name="provider">
+                <option value="">自动选择（按优先级）</option>
+                <option value="nvidia">NVIDIA</option>
+                <option value="llm_vision">LLM Vision</option>
+                <option value="browser_sse">Browser SSE</option>
+            </select>
+        </div>
+
+        <div class="form-group">
+            <label for="output">输出目录</label>
+            <input type="text" id="output" name="output" 
+                   placeholder="可选：默认为目录下的ocr_results子目录">
+        </div>
+
+        <div class="form-group">
+            <label for="workers">并发数</label>
+            <input type="number" id="workers" name="workers" value="1" min="1" max="10">
+        </div>
+
+        <div class="form-group">
+            <label>
+                <input type="checkbox" id="recursive" name="recursive">
+                递归搜索子目录
+            </label>
+        </div>
+
+        <div class="form-group">
+            <label>
+                <input type="checkbox" id="skip-existing" name="skip-existing">
+                跳过已有结果
+            </label>
+        </div>
+
+        <button type="submit" class="btn btn-primary">开始批量处理</button>
+    </form>
+
+    <div id="progress" class="progress-container" style="display: none;">
+        <h2>处理进度</h2>
+        <div class="progress-bar">
+            <div id="progress-fill" class="progress-fill"></div>
+        </div>
+        <p id="progress-text">0/0</p>
+    </div>
+
+    <div id="results" class="results-container" style="display: none;">
+        <h2>处理结果</h2>
+        <div id="results-content"></div>
+    </div>
+</div>
+
+<script>
+    document.getElementById('batch-form').addEventListener('submit', async function(e) {
+        e.preventDefault();
+        
+        const directory = document.getElementById('directory').value;
+        const provider = document.getElementById('provider').value;
+        const output = document.getElementById('output').value;
+        const workers = parseInt(document.getElementById('workers').value);
+        const recursive = document.getElementById('recursive').checked;
+        const skipExisting = document.getElementById('skip-existing').checked;
+        
+        // Show progress
+        document.getElementById('progress').style.display = 'block';
+        document.getElementById('results').style.display = 'none';
+        
+        // Build CLI command (for display)
+        let cmd = `ocr-cli batch "${directory}"`;
+        if (provider) cmd += ` --provider ${provider}`;
+        if (output) cmd += ` --output "${output}"`;
+        if (workers > 1) cmd += ` --workers ${workers}`;
+        if (recursive) cmd += ' --recursive';
+        if (skipExisting) cmd += ' --skip-existing';
+        
+        document.getElementById('results-content').innerHTML = 
+            `<p>请在命令行执行以下命令：</p><pre>${cmd}</pre>`;
+        document.getElementById('results').style.display = 'block';
+    });
+</script>
+{{end}}

@@ -1,0 +1,145 @@
+{{define "content"}}
+<div class="page-header">
+    <h1>任务详情</h1>
+</div>
+
+<div class="task-container">
+    <div id="task-info">
+        <p>加载中...</p>
+    </div>
+</div>
+
+<script>
+    const pathParts = window.location.pathname.split('/');
+    const taskId = pathParts[pathParts.length - 1];
+    
+    fetch(`/api/tasks/${taskId}`)
+        .then(response => response.json())
+        .then(data => {
+            let html = `
+                <div class="card">
+                    <h2>任务信息</h2>
+                    <p><strong>ID:</strong> ${data.id}</p>
+                    <p><strong>状态:</strong> <span class="status-${data.status}">${data.status}</span></p>
+                    <p><strong>创建时间:</strong> ${new Date(data.created_at).toLocaleString()}</p>
+                    ${data.started_at ? `<p><strong>开始时间:</strong> ${new Date(data.started_at).toLocaleString()}</p>` : ''}
+                    ${data.ended_at ? `<p><strong>结束时间:</strong> ${new Date(data.ended_at).toLocaleString()}</p>` : ''}
+                    ${data.provider ? `<p><strong>Provider:</strong> ${data.provider}</p>` : ''}
+                    ${data.error ? `<p class="status-error"><strong>错误:</strong> ${data.error}</p>` : ''}
+                </div>
+            `;
+            
+            if (data.result) {
+                html += `
+                    <div class="card">
+                        <h2>识别结果</h2>
+                        <div class="result-text">
+                            <pre>${data.result.text}</pre>
+                        </div>
+                        <button onclick="copyText()" class="btn btn-secondary">复制文本</button>
+                    </div>
+                `;
+                
+                if (data.result.evaluation) {
+                    html += `
+                        <div class="card">
+                            <h2>质量评估</h2>
+                            <p><strong>评分:</strong> ${data.result.evaluation.score.toFixed(2)}</p>
+                            <p><strong>通过:</strong> ${data.result.evaluation.pass ? '是' : '否'}</p>
+                            <p><strong>原因:</strong> ${data.result.evaluation.reason}</p>
+                        </div>
+                    `;
+                }
+                
+                if (data.result.attempts && data.result.attempts.length > 0) {
+                    html += `
+                        <div class="card">
+                            <h2>尝试记录</h2>
+                            <table class="attempts-table">
+                                <thead>
+                                    <tr>
+                                        <th>Provider</th>
+                                        <th>评分</th>
+                                        <th>状态</th>
+                                        <th>错误</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                    `;
+                    
+                    data.result.attempts.forEach(attempt => {
+                        const statusClass = attempt.passed ? 'status-ok' : 'status-error';
+                        const statusText = attempt.passed ? '通过' : '失败';
+                        html += `
+                            <tr>
+                                <td>${attempt.provider}</td>
+                                <td>${attempt.score ? attempt.score.toFixed(2) : '-'}</td>
+                                <td class="${statusClass}">${attempt.error ? '错误' : statusText}</td>
+                                <td>${attempt.error || '-'}</td>
+                            </tr>
+                        `;
+                    });
+                    
+                    html += `
+                                </tbody>
+                            </table>
+                        </div>
+                    `;
+                }
+                
+                if (data.result.quality_warning) {
+                    html += `
+                        <div class="card warning">
+                            <h2>质量警告</h2>
+                            <p>所有Provider都未能达到质量阈值，返回最佳结果。</p>
+                            ${data.result.best_score ? `<p><strong>最佳评分:</strong> ${data.result.best_score.toFixed(2)}</p>` : ''}
+                        </div>
+                    `;
+                }
+            }
+            
+            document.getElementById('task-info').innerHTML = html;
+        })
+        .catch(error => {
+            document.getElementById('task-info').innerHTML = 
+                '<p class="status-error">无法获取任务信息</p>';
+        });
+    
+    function copyText() {
+        const text = document.querySelector('.result-text pre');
+        if (text) {
+            navigator.clipboard.writeText(text.textContent);
+            alert('已复制到剪贴板');
+        }
+    }
+</script>
+
+<style>
+    .attempts-table {
+        width: 100%;
+        border-collapse: collapse;
+        margin-top: 1rem;
+    }
+    
+    .attempts-table th,
+    .attempts-table td {
+        padding: 0.75rem;
+        text-align: left;
+        border-bottom: 1px solid #eee;
+    }
+    
+    .attempts-table th {
+        background-color: #f8f9fa;
+        font-weight: 600;
+    }
+    
+    .attempts-table tr:hover {
+        background-color: #f8f9fa;
+    }
+    
+    .card.warning {
+        border-left: 4px solid #f39c12;
+        background-color: #fef9e7;
+    }
+</style>
+{{end}}

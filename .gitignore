@@ -1,0 +1,5 @@
+config.yaml
+logs/
+bin/
+ocr_output/
+test_img/

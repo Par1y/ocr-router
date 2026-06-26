@@ -1,0 +1,108 @@
+{{define "content"}}
+<div class="page-header">
+    <h1>提交OCR任务</h1>
+</div>
+
+<div class="form-container">
+    <form id="ocr-form">
+        <div class="form-group">
+            <label for="image_path">图片路径</label>
+            <input type="text" id="image_path" name="image_path" required 
+                   placeholder="输入图片路径或URL">
+        </div>
+
+        <div class="form-group">
+            <label for="provider">Provider</label>
+            <select id="provider" name="provider">
+                <option value="">自动选择（按优先级）</option>
+                <option value="nvidia">NVIDIA</option>
+                <option value="llm_vision">LLM Vision</option>
+                <option value="browser_sse">Browser SSE</option>
+            </select>
+        </div>
+
+        <div class="form-group">
+            <label for="prompt">自定义提示词</label>
+            <textarea id="prompt" name="prompt" rows="3" 
+                      placeholder="可选：自定义OCR提示词"></textarea>
+        </div>
+
+        <div class="form-group">
+            <label>
+                <input type="checkbox" id="async" name="async">
+                异步执行
+            </label>
+        </div>
+
+        <button type="submit" class="btn btn-primary">提交任务</button>
+    </form>
+
+    <div id="result" class="result-container" style="display: none;">
+        <h2>识别结果</h2>
+        <div id="result-content"></div>
+        <button id="copy-btn" class="btn btn-secondary">复制文本</button>
+    </div>
+</div>
+
+<script>
+    document.getElementById('ocr-form').addEventListener('submit', async function(e) {
+        e.preventDefault();
+        
+        const imagePath = document.getElementById('image_path').value;
+        const provider = document.getElementById('provider').value;
+        const prompt = document.getElementById('prompt').value;
+        const isAsync = document.getElementById('async').checked;
+        
+        const endpoint = isAsync ? '/api/ocr/async' : '/api/ocr/sync';
+        
+        const body = {
+            image_path: imagePath
+        };
+        if (provider) body.provider = provider;
+        if (prompt) body.prompt = prompt;
+        
+        try {
+            const response = await fetch(endpoint, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify(body)
+            });
+            
+            const data = await response.json();
+            
+            if (isAsync) {
+                document.getElementById('result-content').innerHTML = 
+                    `<p>任务已提交: <a href="/task/${data.id}">${data.id}</a></p>`;
+            } else {
+                let html = `<div class="result-text"><pre>${data.text}</pre></div>`;
+                if (data.evaluation) {
+                    html += `<div class="evaluation">
+                        <p>质量评分: ${data.evaluation.score.toFixed(2)}</p>
+                        <p>${data.evaluation.reason}</p>
+                    </div>`;
+                }
+                document.getElementById('result-content').innerHTML = html;
+            }
+            
+            document.getElementById('result').style.display = 'block';
+        } catch (error) {
+            document.getElementById('result-content').innerHTML = 
+                `<p class="status-error">错误: ${error.message}</p>`;
+            document.getElementById('result').style.display = 'block';
+        }
+    });
+    
+    document.getElementById('copy-btn').addEventListener('click', function() {
+        const text = document.querySelector('.result-text pre');
+        if (text) {
+            navigator.clipboard.writeText(text.textContent);
+            this.textContent = '已复制';
+            setTimeout(() => {
+                this.textContent = '复制文本';
+            }, 2000);
+        }
+    });
+</script>
+{{end}}

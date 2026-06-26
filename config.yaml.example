@@ -1,0 +1,92 @@
+server:
+  host: "0.0.0.0"
+  port: 8080
+
+storage:
+  base_dir: "./ocr_output"
+  format: "both" # text, json, both
+
+providers:
+  nvidia:
+    type: "nvidia"
+    enabled: true
+    api_key: "${NVIDIA_API_KEY}"
+    endpoint: "https://ai.api.nvidia.com/v1/cv/nvidia/nemotron-ocr-v2"
+    max_b64_len: 180000
+
+  llm_vision:
+    type: "llm_vision"
+    enabled: true
+    api_key: "${STEP_API_KEY}"
+    endpoint: "https://api.stepfun.com/step_plan/v1/chat/completions"
+    model: "step-router-v1"
+    prompt: "Extract all text from this image. Return only the text content."
+    max_tokens: 4096
+
+  browser_sse:
+    type: "browser_sse"
+    enabled: true
+    base_url: "https://dotsocr.xiaohongshu.com"
+    endpoints:
+      upload: "/gradio_api/upload"
+      submit: "/gradio_api/queue/join"
+      sse: "/gradio_api/queue/data"
+    headers:
+      User-Agent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/151.0.0.0 Safari/537.36"
+
+evaluator:
+  enabled: true
+  endpoint: "https://api.stepfun.com/step_plan/v1/chat/completions"
+  api_key: "${STEP_API_KEY}"
+  model: "step-router-v1"
+  threshold: 0.7
+  max_retries: 3
+  retry_delay: "1s"
+  timeout: "30s"
+  prompt: |
+    You are an OCR quality evaluator. Please evaluate the quality of the following OCR result.
+
+    OCR Result:
+    {{ocr_result}}
+
+    Evaluate on these criteria:
+    1. Completeness (0-1): Is the text complete? Any missing content?
+    2. Accuracy (0-1): Are there any recognition errors?
+    3. Readability (0-1): Is the result easy to read and understand?
+
+    Return JSON format:
+    {
+      "score": 0.85,
+      "reason": "Brief explanation of the score",
+      "details": {
+        "completeness": 0.9,
+        "accuracy": 0.8,
+        "readability": 0.85
+      }
+    }
+
+fallback:
+  strategy: "sequential" # sequential, random
+  max_retries: 3
+  retry_delay: "2s"
+  providers:
+    - name: "nvidia"
+      priority: 1
+      enabled: true
+    - name: "llm_vision"
+      priority: 2
+      enabled: true
+    - name: "browser_sse"
+      priority: 3
+      enabled: true
+
+task:
+  workers: 5
+  queue_size: 100
+  task_timeout: "300s"
+
+logging:
+  level: "info" # debug, info, warn, error
+  file: "./logs/ocr.log"
+  format: "json" # json, text
+  log_fallback: true

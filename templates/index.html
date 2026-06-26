@@ -1,0 +1,85 @@
+{{define "content"}}
+<div class="hero">
+    <h1>OCR System</h1>
+    <p>多Provider支持、质量评估、自动回退</p>
+</div>
+
+<div class="dashboard">
+    <div class="card">
+        <h2>系统状态</h2>
+        <div id="system-status">
+            <p>加载中...</p>
+        </div>
+    </div>
+
+    <div class="card">
+        <h2>Provider状态</h2>
+        <div id="provider-status">
+            <p>加载中...</p>
+        </div>
+    </div>
+
+    <div class="card">
+        <h2>最近任务</h2>
+        <div id="recent-tasks">
+            <p>加载中...</p>
+        </div>
+    </div>
+</div>
+
+<script>
+    // Load system status
+    fetch('/api/health')
+        .then(response => response.json())
+        .then(data => {
+            document.getElementById('system-status').innerHTML = 
+                '<p class="status-ok">系统正常运行</p>';
+        })
+        .catch(error => {
+            document.getElementById('system-status').innerHTML = 
+                '<p class="status-error">系统异常</p>';
+        });
+
+    // Load provider status
+    fetch('/api/providers')
+        .then(response => response.json())
+        .then(data => {
+            let html = '<ul class="provider-list">';
+            for (const [name, status] of Object.entries(data)) {
+                const statusClass = status.healthy ? 'status-ok' : 'status-error';
+                const statusText = status.healthy ? '正常' : '异常';
+                html += `<li><span class="provider-name">${name}</span>: <span class="${statusClass}">${statusText}</span></li>`;
+            }
+            html += '</ul>';
+            document.getElementById('provider-status').innerHTML = html;
+        })
+        .catch(error => {
+            document.getElementById('provider-status').innerHTML = 
+                '<p class="status-error">无法获取Provider状态</p>';
+        });
+
+    // Load recent tasks
+    fetch('/api/tasks?limit=5')
+        .then(response => response.json())
+        .then(data => {
+            if (data.length === 0) {
+                document.getElementById('recent-tasks').innerHTML = '<p>暂无任务</p>';
+                return;
+            }
+            let html = '<ul class="task-list">';
+            data.forEach(task => {
+                const statusClass = `status-${task.status}`;
+                html += `<li>
+                    <a href="/task/${task.id}">${task.id}</a>
+                    <span class="${statusClass}">${task.status}</span>
+                </li>`;
+            });
+            html += '</ul>';
+            document.getElementById('recent-tasks').innerHTML = html;
+        })
+        .catch(error => {
+            document.getElementById('recent-tasks').innerHTML = 
+                '<p class="status-error">无法获取任务列表</p>';
+        });
+</script>
+{{end}}

@@ -349,6 +349,28 @@ func (p *BrowserSSEProvider) submitOCRTask(ctx context.Context, serverPath, file
 	return nil
 }
 
+// sseLine represents a single line read from an SSE stream
+type sseLine struct {
+	text string
+	err  error
+}
+
+// readSSELines starts a goroutine that reads SSE lines from resp.Body and sends them on the returned channel.
+// The channel is closed when the reader exits (connection closed, error, or body closed externally).
+// Buffered channel of size 1 prevents goroutine leaks when the consumer returns early.
+func readSSELines(resp *http.Response) <-chan sseLine {
+	ch := make(chan sseLine, 1)
+	go func() {
+		defer close(ch)
+		scanner := bufio.NewScanner(resp.Body)
+		for scanner.Scan() {
+			ch <- sseLine{text: scanner.Text()}
+		}
+		ch <- sseLine{err: scanner.Err()}
+	}()
+	return ch
+}
+
 // waitForEvent waits for a specific event type
 func (p *BrowserSSEProvider) waitForEvent(ctx context.Context, sessionHash, eventType string) error {
 	sseURL := p.config.BaseURL + p.config.Endpoints["sse"]
@@ -368,7 +390,7 @@ func (p *BrowserSSEProvider) waitForEvent(ctx context.Context, sessionHash, even
 	}
 	defer resp.Body.Close()
 
-	scanner := bufio.NewScanner(resp.Body)
+	lines := readSSELines(resp)
 	timeout := time.After(2 * time.Minute)
 
 	for {
@@ -377,15 +399,15 @@ func (p *BrowserSSEProvider) waitForEvent(ctx context.Context, sessionHash, even
 			return fmt.Errorf("timeout waiting for %s event", eventType)
 		case <-ctx.Done():
 			return ctx.Err()
-		default:
-			if !scanner.Scan() {
-				if err := scanner.Err(); err != nil {
-					return fmt.Errorf("failed to read SSE: %w", err)
-				}
-				return fmt.Errorf("SSE connection closed")
+		case sl, ok := <-lines:
+			if !ok {
+				return fmt.Errorf("SSE connection closed unexpectedly")
+			}
+			if sl.err != nil {
+				return fmt.Errorf("failed to read SSE: %w", sl.err)
 			}
 
-			line := scanner.Text()
+			line := sl.text
 			if !strings.HasPrefix(line, "data:") {
 				continue
 			}
@@ -447,7 +469,7 @@ func (p *BrowserSSEProvider) waitForOCRResult(ctx context.Context, sessionHash s
 	}
 	defer resp.Body.Close()
 
-	scanner := bufio.NewScanner(resp.Body)
+	lines := readSSELines(resp)
 	timeout := time.After(5 * time.Minute)
 
 	for {
@@ -456,15 +478,15 @@ func (p *BrowserSSEProvider) waitForOCRResult(ctx context.Context, sessionHash s
 			return "", fmt.Errorf("SSE timeout waiting for OCR result")
 		case <-ctx.Done():
 			return "", ctx.Err()
-		default:
-			if !scanner.Scan() {
-				if err := scanner.Err(); err != nil {
-					return "", fmt.Errorf("failed to read SSE: %w", err)
-				}
-				return "", fmt.Errorf("SSE connection closed")
+		case sl, ok := <-lines:
+			if !ok {
+				return "", fmt.Errorf("SSE connection closed unexpectedly")
+			}
+			if sl.err != nil {
+				return "", fmt.Errorf("failed to read SSE: %w", sl.err)
 			}
 
-			line := scanner.Text()
+			line := sl.text
 			if !strings.HasPrefix(line, "data:") {
 				continue
 			}

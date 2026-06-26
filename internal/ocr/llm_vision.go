@@ -186,12 +186,29 @@ func (p *LLMVisionProvider) Recognize(ctx context.Context, req *OCRRequest) (*OC
 
 // HealthCheck checks if the LLM Vision API is healthy
 func (p *LLMVisionProvider) HealthCheck(ctx context.Context) error {
-	// Simple health check by making a minimal request
-	req, err := http.NewRequestWithContext(ctx, "HEAD", p.config.Endpoint, nil)
+	// Make a minimal API call to verify the service is working
+	minimalReq := LLMVisionRequest{
+		Model: p.config.Model,
+		Messages: []LLMMessage{
+			{
+				Role:    "user",
+				Content: "hi",
+			},
+		},
+		MaxTokens: 1,
+	}
+
+	reqBody, err := json.Marshal(minimalReq)
+	if err != nil {
+		return fmt.Errorf("failed to marshal health check request: %w", err)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, "POST", p.config.Endpoint, bytes.NewReader(reqBody))
 	if err != nil {
 		return fmt.Errorf("failed to create health check request: %w", err)
 	}
 
+	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+p.config.APIKey)
 
 	resp, err := p.client.Do(req)
@@ -200,7 +217,10 @@ func (p *LLMVisionProvider) HealthCheck(ctx context.Context) error {
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+	// Drain the response body to allow connection reuse
+	io.Copy(io.Discard, resp.Body)
+
+	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("health check failed: status %d", resp.StatusCode)
 	}
 

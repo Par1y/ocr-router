@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"time"
 
 	"ocr-router/internal/config"
@@ -149,13 +150,23 @@ func (p *NVIDIAProvider) Recognize(ctx context.Context, req *OCRRequest) (*OCRRe
 
 // HealthCheck checks if the NVIDIA API is healthy
 func (p *NVIDIAProvider) HealthCheck(ctx context.Context) error {
-	// Simple health check by making a minimal request
-	req, err := http.NewRequestWithContext(ctx, "HEAD", p.config.Endpoint, nil)
+	// Use the dedicated health check endpoint
+	// From NVIDIA docs: /v1/health/live returns {"live": true}
+	healthURL := strings.TrimSuffix(p.config.Endpoint, "/")
+	// Remove the inference path to get the base URL
+	// e.g., https://ai.api.nvidia.com/v1/cv/nvidia/nemotron-ocr-v2 -> https://ai.api.nvidia.com
+	if idx := strings.Index(healthURL, "/v1/"); idx > 0 {
+		healthURL = healthURL[:idx]
+	}
+	healthURL += "/v1/health/live"
+
+	req, err := http.NewRequestWithContext(ctx, "GET", healthURL, nil)
 	if err != nil {
 		return fmt.Errorf("failed to create health check request: %w", err)
 	}
 
 	req.Header.Set("Authorization", "Bearer "+p.config.APIKey)
+	req.Header.Set("Accept", "application/json")
 
 	resp, err := p.client.Do(req)
 	if err != nil {
@@ -163,7 +174,10 @@ func (p *NVIDIAProvider) HealthCheck(ctx context.Context) error {
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+	// Drain the response body to allow connection reuse
+	io.Copy(io.Discard, resp.Body)
+
+	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("health check failed: status %d", resp.StatusCode)
 	}
 

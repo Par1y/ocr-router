@@ -170,8 +170,17 @@ func (m *TaskManager) processTask(task *Task) {
 	task.EndedAt = &endNow
 
 	if err != nil {
-		task.Status = TaskStatusFailed
-		task.Error = err.Error()
+		// Check if task was cancelled
+		if ctx.Err() == context.Canceled {
+			task.Status = TaskStatusCancelled
+			task.Error = "task cancelled"
+		} else if ctx.Err() == context.DeadlineExceeded {
+			task.Status = TaskStatusFailed
+			task.Error = "task timed out"
+		} else {
+			task.Status = TaskStatusFailed
+			task.Error = err.Error()
+		}
 	} else {
 		task.Status = TaskStatusCompleted
 		task.Result = result

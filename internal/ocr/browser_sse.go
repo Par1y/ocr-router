@@ -363,6 +363,8 @@ func readSSELines(resp *http.Response) <-chan sseLine {
 	go func() {
 		defer close(ch)
 		scanner := bufio.NewScanner(resp.Body)
+		// Increase buffer size to handle large OCR results (default 64KB is too small)
+		scanner.Buffer(make([]byte, 0, 1024*1024), 1024*1024) // 1MB buffer
 		for scanner.Scan() {
 			ch <- sseLine{text: scanner.Text()}
 		}

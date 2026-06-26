@@ -93,6 +93,10 @@ var batchCmd = &cobra.Command{
 
 		fmt.Printf("Found %d images to process\n", len(images))
 
+		// Create parent context with cancellation for graceful shutdown
+		ctx, cancel := context.WithCancel(cmd.Context())
+		defer cancel()
+
 		// Process images
 		var wg sync.WaitGroup
 		sem := make(chan struct{}, workers)
@@ -105,7 +109,7 @@ var batchCmd = &cobra.Command{
 				sem <- struct{}{}
 				defer func() { <-sem }()
 
-				result := processImage(engine, provider, imgPath, outputDir, idx+1, len(images), saveJSON)
+				result := processImage(ctx, engine, provider, imgPath, outputDir, idx+1, len(images), saveJSON)
 				results <- result
 			}(i, img)
 		}
@@ -161,13 +165,14 @@ type processResult struct {
 	err    error
 }
 
-func processImage(engine *ocr.FallbackEngine, provider, imagePath, outputDir string, current, total int, saveJSON bool) *processResult {
+func processImage(ctx context.Context, engine *ocr.FallbackEngine, provider, imagePath, outputDir string, current, total int, saveJSON bool) *processResult {
 	// Build request
 	req := &ocr.OCRRequest{
 		ImagePath: imagePath,
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	// Create child context with timeout from parent context
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Minute)
 	defer cancel()
 
 	var result *ocr.OCRResult
@@ -217,8 +222,17 @@ func processImage(engine *ocr.FallbackEngine, provider, imagePath, outputDir str
 	if saveJSON {
 		jsonPath := filepath.Join(outputDir, name+".json")
 		jsonData, err := json.MarshalIndent(result, "", "  ")
-		if err == nil {
-			os.WriteFile(jsonPath, jsonData, 0644)
+		if err != nil {
+			return &processResult{
+				file: imagePath,
+				err:  fmt.Errorf("failed to marshal JSON: %w", err),
+			}
+		}
+		if err := os.WriteFile(jsonPath, jsonData, 0644); err != nil {
+			return &processResult{
+				file: imagePath,
+				err:  fmt.Errorf("failed to save JSON result: %w", err),
+			}
 		}
 	}
 

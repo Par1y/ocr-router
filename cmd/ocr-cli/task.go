@@ -52,6 +52,8 @@ var taskListCmd = &cobra.Command{
 
 		// Create task manager
 		taskMgr := task.NewTaskManager(engine, cfg.Task.Workers, cfg.Task.QueueSize, cfg.Task.TaskTimeout)
+		taskMgr.Start()
+		defer taskMgr.Stop()
 
 		// List tasks
 		var taskStatus task.TaskStatus
@@ -122,6 +124,8 @@ var taskStatusCmd = &cobra.Command{
 
 		// Create task manager
 		taskMgr := task.NewTaskManager(engine, cfg.Task.Workers, cfg.Task.QueueSize, cfg.Task.TaskTimeout)
+		taskMgr.Start()
+		defer taskMgr.Stop()
 
 		// Get task
 		t, ok := taskMgr.GetTask(taskID)

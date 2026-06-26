@@ -230,3 +230,81 @@ ocr-router/
 ## 许可证
 
 MIT
+
+## 发布
+
+### 自动发布（推荐）
+
+项目使用GitHub Actions自动发布。当推送以 `v` 开头的tag时，会自动构建并发布Release。
+
+#### 发布步骤：
+
+1. **更新版本号**（可选）：
+   ```bash
+   # 更新go.mod中的版本号
+   go mod edit -go=1.22
+   ```
+
+2. **创建tag**：
+   ```bash
+   git tag v1.0.0
+   ```
+
+3. **推送tag**：
+   ```bash
+   git push origin v1.0.0
+   ```
+
+4. **自动构建**：
+   - GitHub Actions会自动构建三个平台的二进制文件
+   - Linux (amd64, arm64)
+   - Windows (amd64)
+
+5. **填写Release Notes**：
+   - 访问GitHub仓库的Releases页面
+   - 点击刚创建的Release
+   - 点击"Edit release"
+   - 填写Release Notes（新功能、Bug修复等）
+   - 点击"Update release"
+
+#### 产出物：
+
+每个Release包含：
+- `ocr-cli-linux-amd64.tar.gz` - Linux x86_64
+- `ocr-cli-linux-arm64.tar.gz` - Linux ARM64
+- `ocr-cli-windows-amd64.zip` - Windows x86_64
+- `checksums.txt` - SHA256校验和
+
+#### 版本号规范：
+
+建议使用语义化版本：
+- `v1.0.0` - 正式发布
+- `v1.1.0` - 新功能
+- `v1.0.1` - Bug修复
+- `v2.0.0` - 重大更新
+
+### 手动构建
+
+如果需要手动构建：
+
+```bash
+# 构建所有平台
+GOOS=linux GOARCH=amd64 go build -o bin/ocr-cli-linux-amd64 ./cmd/ocr-cli
+GOOS=linux GOARCH=arm64 go build -o bin/ocr-cli-linux-arm64 ./cmd/ocr-cli
+GOOS=windows GOARCH=amd64 go build -o bin/ocr-cli-windows-amd64.exe ./cmd/ocr-cli
+
+# 创建压缩包
+tar -czf ocr-cli-linux-amd64.tar.gz -C bin ocr-cli-linux-amd64
+tar -czf ocr-cli-linux-arm64.tar.gz -C bin ocr-cli-linux-arm64
+zip -j ocr-cli-windows-amd64.zip bin/ocr-cli-windows-amd64.exe
+
+# 生成校验和
+sha256sum ocr-cli-*.tar.gz ocr-cli-*.zip > checksums.txt
+```
+
+### GitHub仓库设置
+
+确保仓库有写权限：
+1. 进入仓库Settings → Actions → General
+2. 在"Workflow permissions"下选择"Read and write permissions"
+3. 保存更改

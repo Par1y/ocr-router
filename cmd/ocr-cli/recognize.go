@@ -103,6 +103,11 @@ var recognizeCmd = &cobra.Command{
 		req := &ocr.OCRRequest{Prompt: prompt}
 		var combined strings.Builder
 		pageDone := 0
+		pageSuccess := 0
+		var usedProvider string       // provider that actually ran the first page
+		var evalSum float64           // summed evaluation scores across pages
+		var evalCount int             // number of pages that had an evaluation
+		var allAttempts []ocr.AttemptRecord
 
 		err = processPDFWithWindow(renderer, imagePath, first, last, win, totalPages, func(task FileTask) error {
 			req.ImagePath = task.ImagePath
@@ -122,10 +127,21 @@ var recognizeCmd = &cobra.Command{
 				fmt.Fprintf(os.Stderr, "✗ %s page %d: %s\n", baseName(imagePath), task.PageNum, e)
 				return nil // continue, like batch
 			}
+			pageSuccess++
 			if combined.Len() > 0 {
 				combined.WriteString("\n\n")
 			}
 			combined.WriteString(r.Text)
+			if usedProvider == "" {
+				usedProvider = r.Provider
+			}
+			if r.Evaluation != nil {
+				evalSum += r.Evaluation.Score
+				evalCount++
+			}
+			if len(r.Attempts) > 0 {
+				allAttempts = append(allAttempts, r.Attempts...)
+			}
 			fmt.Fprintf(os.Stderr, "✓ %s page %d (%d chars)\n", baseName(imagePath), task.PageNum, len(r.Text))
 			return nil
 		})
@@ -137,28 +153,32 @@ var recognizeCmd = &cobra.Command{
 		if text == "" {
 			return fmt.Errorf("no text recognized")
 		}
-		if window_count_more_than_one(first, hi) {
-			// keep header optional; skip it for clean single-page output
-		}
 		r := &ocr.OCRResult{
-			Provider:  provider,
+			Provider:  usedProvider,
 			Text:      text,
+			Attempts:  allAttempts,
 			Timestamp: time.Now(),
 			Metadata: map[string]interface{}{
-				"is_pdf":       true,
-				"pages":        pageDone,
-				"source_file":  imagePath,
-				"window_first": first,
-				"window_last":  last,
-				"window_size":  win,
+				"is_pdf":         true,
+				"pages":          pageSuccess,
+				"pages_total":    pageDone,
+				"pages_failed":   pageDone - pageSuccess,
+				"source_file":    imagePath,
+				"window_first":   first,
+				"window_last":    last,
+				"window_size":    win,
 			},
+		}
+		if evalCount > 0 {
+		avgScore := evalSum / float64(evalCount)
+		r.Evaluation = &ocr.EvaluationResult{
+			Score:  avgScore,
+			Reason: fmt.Sprintf("average across %d pages", evalCount),
+			Pass:   avgScore >= cfg.Evaluator.Threshold,
+		}
 		}
 		return outputResult(r, outputFormat)
 	},
-}
-
-func window_count_more_than_one(first, hi int) bool {
-	return hi == 0 || hi-first > 0
 }
 
 func baseName(p string) string {

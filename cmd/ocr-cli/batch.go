@@ -164,8 +164,8 @@ var batchCmd = &cobra.Command{
 			}
 
 			pdfBase := filepath.Base(pdf)
-			if idx := strings.LastIndex(pdfBase, "."); idx > 0 {
-				pdfBase = pdfBase[:idx]
+			if ext := filepath.Ext(pdfBase); ext != "" {
+				pdfBase = pdfBase[:len(pdfBase)-len(ext)]
 			}
 
 			totalPages, _ := renderer.CountPages(pdf)

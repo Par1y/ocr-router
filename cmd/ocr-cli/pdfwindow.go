@@ -79,13 +79,51 @@ func processPDFWithWindow(
 		_ = os.Stdout.Sync()
 		ocr.Cleanup(tmp)
 
-		// Advance window.
-		if len(pages) < window {
-			// Fewer than a full window returned: this is the tail, stop.
+		// Advance window. Stop only when the last page we actually rendered
+		// equals the requested upper bound (cur..wEnd), not when the count
+		// drops below the window size — pdftoppm may emit fewer pages than
+		// asked for various reasons, so a count-based tail check would risk
+		// dropping pages mid-document.
+		//
+		// An empty page list from a successful render is treated as end of
+		// document: this happens when the caller-supplied --last exceeds the
+		// actual page count, or when totalPages was unknown (hi==0). A
+		// genuine render failure is already surfaced via the error returned
+		// by renderer.Render above, so reaching here with no pages means
+		// there is simply nothing left to render.
+		if len(pages) == 0 {
 			break
 		}
-		cur += window
-		_ = base
+		lastRendered := 0
+		for _, pg := range pages {
+			if pg.Page > lastRendered {
+				lastRendered = pg.Page
+			}
+		}
+		// Reached the caller's explicit upper bound.
+		if hi > 0 && lastRendered >= hi {
+			break
+		}
+		// Strong EOF signal: the renderer reached the known end of the
+		// document. This is the only safe termination when pages can be
+		// skipped inside a window — relying on "rendered fewer than the
+		// window" would falsely stop on the first partial window.
+		if totalPages > 0 && lastRendered >= totalPages {
+			break
+		}
+		// Unknown total page count (hi==0 and totalPages==0). Here the only
+		// end-of-document cue we have is the renderer emitting fewer pages
+		// than the window asked for, so use it — but only in that mode.
+		if hi <= 0 && totalPages <= 0 && lastRendered < wEnd {
+			break
+		}
+		// Make progress: if the renderer did not advance past `cur` we'd
+		// loop forever, so bail out defensively.
+		next := lastRendered + 1
+		if next <= cur {
+			break
+		}
+		cur = next
 	}
 	return nil
 }

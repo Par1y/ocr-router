@@ -36,7 +36,7 @@ func paginate(
 		return nil, fmt.Errorf("provider %q does not support PDF input", providerName)
 	}
 
-	pages, tmpDir, err := renderer.Render(req.ImagePath)
+	pages, tmpDir, err := renderer.Render(req.ImagePath, 0, 0)
 	if err != nil {
 		return nil, fmt.Errorf("pdf render failed: %w", err)
 	}

@@ -19,7 +19,7 @@ import (
 var batchCmd = &cobra.Command{
 	Use:   "batch [directory]",
 	Short: "Batch OCR recognition",
-	Long:  "Perform OCR recognition on all images and PDF files in a directory. PDFs are rasterized page-by-page.",
+	Long:  "Perform OCR recognition on all images and PDF files in a directory. PDFs are rasterized in a sliding window so large files do not explode disk usage.",
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		dir := args[0]
@@ -55,14 +55,17 @@ var batchCmd = &cobra.Command{
 		// Create fallback engine
 		engine := ocr.NewFallbackEngine(providers, cfg.Fallback, evaluator, log)
 
-		// Find images
-		images, err := findImages(dir, recursive)
+		// PDF renderer (may be nil when disabled)
+		renderer := makeRenderer(cfg)
+
+		// Find files (images and PDFs)
+		files, err := findImages(dir, recursive)
 		if err != nil {
-			return fmt.Errorf("failed to find images: %w", err)
+			return fmt.Errorf("failed to find files: %w", err)
 		}
 
-		if len(images) == 0 {
-			fmt.Println("No images found")
+		if len(files) == 0 {
+			fmt.Println("No files found")
 			return nil
 		}
 
@@ -72,79 +75,134 @@ var batchCmd = &cobra.Command{
 		}
 		os.MkdirAll(outputDir, 0755)
 
-		// Filter existing results
+		// Split into image inputs (eligible for skip-existing parallelism)
+		// and PDF inputs (processed inline via sliding window).
+		var imageFiles []string
+		var pdfFiles []string
+		for _, p := range files {
+			if ocr.IsPDF(p) {
+				pdfFiles = append(pdfFiles, p)
+			} else {
+				imageFiles = append(imageFiles, p)
+			}
+		}
+
+		// Filter existing results for images only
 		if skipExisting {
-			var filtered []string
-			for _, img := range images {
+			var filteredImg []string
+			for _, img := range imageFiles {
 				base := filepath.Base(img)
 				ext := filepath.Ext(base)
 				name := base[:len(base)-len(ext)]
 				txtPath := filepath.Join(outputDir, name+".txt")
 				if _, err := os.Stat(txtPath); os.IsNotExist(err) {
-					filtered = append(filtered, img)
+					filteredImg = append(filteredImg, img)
 				}
 			}
-			images = filtered
+			imageFiles = filteredImg
 		}
 
-		if len(images) == 0 {
-			fmt.Println("No images to process")
+		total := len(imageFiles) + len(pdfFiles)
+		if total == 0 {
+			fmt.Println("No files to process")
 			return nil
 		}
 
-		fmt.Printf("Found %d images to process\n", len(images))
+		fmt.Printf("Found %d files to process (%d images, %d PDFs)\n", total, len(imageFiles), len(pdfFiles))
 
 		// Create parent context with cancellation for graceful shutdown
 		ctx, cancel := context.WithCancel(cmd.Context())
 		defer cancel()
 
-		// Process images
-		var wg sync.WaitGroup
-		sem := make(chan struct{}, workers)
-		results := make(chan *processResult, len(images))
+		var success, failed int
 
-		for i, img := range images {
-			wg.Add(1)
-			go func(idx int, imgPath string) {
-				defer wg.Done()
-				sem <- struct{}{}
-				defer func() { <-sem }()
+		// 1) Process standalone images concurrently (unchanged behaviour).
+		if len(imageFiles) > 0 {
+			var wg sync.WaitGroup
+			sem := make(chan struct{}, workers)
+			results := make(chan *processResult, len(imageFiles))
 
-				result := processImage(ctx, engine, provider, imgPath, outputDir, idx+1, len(images), saveJSON)
-				results <- result
-			}(i, img)
+			for i, img := range imageFiles {
+				wg.Add(1)
+				go func(idx int, imgPath string) {
+					defer wg.Done()
+					sem <- struct{}{}
+					defer func() { <-sem }()
+
+					result := processImage(ctx, engine, provider, imgPath, outputDir, idx+1, len(imageFiles), saveJSON)
+					results <- result
+				}(i, img)
+			}
+
+			go func() {
+				wg.Wait()
+				close(results)
+			}()
+
+			for result := range results {
+				if result.err != nil {
+					failed++
+					fmt.Fprintf(os.Stderr, "✗ %s: %s\n", filepath.Base(result.file), result.err)
+				} else {
+					success++
+					fmt.Printf("✓ %s -> %s\n", filepath.Base(result.file), result.output)
+				}
+			}
 		}
 
-		// Wait for all goroutines
-		go func() {
-			wg.Wait()
-			close(results)
-		}()
-
-		// Collect results
-		var success, failed int
-		var failedFiles []string
-
-		for result := range results {
-			if result.err != nil {
+		// 2) Process each PDF via sliding window, reusing processImageNamed
+		// for every page so disk-writing/scoring logic is shared with images.
+		// workers intentionally does NOT apply here: rendering a window is cheap
+		// and pages are OCR'd serially to keep the renderer's temp directory
+		// bounded to pdf.window_size pages at a time.
+		windowFlag, _ := cmd.Flags().GetInt("window")
+		for _, pdf := range pdfFiles {
+			if !cfg.PDF.Enabled || renderer == nil {
+				fmt.Fprintf(os.Stderr, "✗ %s: PDF support disabled in config\n", filepath.Base(pdf))
 				failed++
-				failedFiles = append(failedFiles, fmt.Sprintf("%s: %s", result.file, result.err))
-				fmt.Fprintf(os.Stderr, "✗ %s: %s\n", filepath.Base(result.file), result.err)
-			} else {
-				success++
-				fmt.Printf("✓ %s -> %s\n", filepath.Base(result.file), result.output)
+				continue
 			}
+
+			pdfBase := filepath.Base(pdf)
+			if idx := strings.LastIndex(pdfBase, "."); idx > 0 {
+				pdfBase = pdfBase[:idx]
+			}
+
+			totalPages, _ := renderer.CountPages(pdf)
+			window := windowFlag
+			if window <= 0 {
+				window = cfg.PDF.WindowSize
+			}
+			if window < 1 {
+				window = 1
+			}
+			fmt.Fprintf(os.Stderr, "[pdf] %s: %d pages, window=%d\n", pdfBase, totalPages, window)
+
+			pageDone := 0
+			handlePage := func(task FileTask) error {
+				outName := fmt.Sprintf("%s-%04d", pdfBase, task.PageNum)
+				res := processImageNamed(ctx, engine, provider, task.ImagePath,
+					outputDir, pageDone+1, totalPages, saveJSON, outName)
+				pageDone++
+				if res.err != nil {
+					fmt.Fprintf(os.Stderr, "✗ %s page %d: %s\n", pdfBase, task.PageNum, res.err)
+					return nil // keep going like batch does
+				}
+				fmt.Fprintf(os.Stderr, "✓ %s page %d -> %s\n", pdfBase, task.PageNum, res.output)
+				return nil
+			}
+
+			perr := processPDFWithWindow(renderer, pdf, 0, 0, window, totalPages, handlePage)
+			if perr != nil {
+				fmt.Fprintf(os.Stderr, "✗ %s: %s\n", filepath.Base(pdf), perr)
+				failed++
+				continue
+			}
+			success++
 		}
 
 		// Print summary
-		fmt.Printf("\nCompleted: %d success, %d failed, %d total\n", success, failed, len(images))
-
-		if len(failedFiles) > 0 {
-			fmt.Println("\nFailed files:")
-			for _, f := range failedFiles {
-				fmt.Printf("  - %s\n", f)
-			}
-		}
+		fmt.Printf("\nCompleted: %d success, %d failed, %d total\n", success, failed, total)
 
 		return nil
 	},
@@ -154,10 +212,11 @@ func init() {
 	batchCmd.Flags().StringP("config", "c", "config.yaml", "Config file path")
 	batchCmd.Flags().StringP("provider", "p", "", "OCR provider to use")
 	batchCmd.Flags().StringP("output", "o", "", "Output directory")
-	batchCmd.Flags().IntP("workers", "w", 1, "Number of concurrent workers")
+	batchCmd.Flags().IntP("workers", "w", 1, "Number of concurrent workers (images only; PDF pages run serially)")
 	batchCmd.Flags().BoolP("recursive", "r", false, "Search recursively")
 	batchCmd.Flags().BoolP("skip-existing", "s", false, "Skip existing results")
 	batchCmd.Flags().Bool("save-json", false, "Also save JSON output")
+	batchCmd.Flags().Int("window", 0, "PDF sliding-window size (overrides pdf.window_size; default 20)")
 }
 
 type processResult struct {
@@ -167,6 +226,15 @@ type processResult struct {
 }
 
 func processImage(ctx context.Context, engine *ocr.FallbackEngine, provider, imagePath, outputDir string, current, total int, saveJSON bool) *processResult {
+	return processImageNamed(ctx, engine, provider, imagePath, outputDir, current, total, saveJSON, "")
+}
+
+// processImageNamed is processImage with an optional output-name override used
+// for PDF pages, whose rendered image path is a temp PNG. When nameOverride is
+// non-empty it is used as the output basename (without extension); otherwise
+// the basename of imagePath is used. Reusing this for both images and PDF
+// pages keeps a single source of truth for how results are written to disk.
+func processImageNamed(ctx context.Context, engine *ocr.FallbackEngine, provider, imagePath, outputDir string, current, total int, saveJSON bool, nameOverride string) *processResult {
 	// Build request
 	req := &ocr.OCRRequest{
 		ImagePath: imagePath,
@@ -201,10 +269,13 @@ func processImage(ctx context.Context, engine *ocr.FallbackEngine, provider, ima
 		}
 	}
 
-	// Save text result
-	base := filepath.Base(imagePath)
-	ext := filepath.Ext(base)
-	name := base[:len(base)-len(ext)]
+	// Resolve output basename.
+	name := nameOverride
+	if name == "" {
+		base := filepath.Base(imagePath)
+		ext := filepath.Ext(base)
+		name = base[:len(base)-len(ext)]
+	}
 	txtPath := filepath.Join(outputDir, name+".txt")
 
 	text := result.Text

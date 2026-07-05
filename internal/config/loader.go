@@ -128,6 +128,9 @@ func setDefaults(cfg *Config) {
 	if cfg.PDF.JPEGQuality == 0 {
 		cfg.PDF.JPEGQuality = 85
 	}
+	if cfg.PDF.WindowSize == 0 {
+		cfg.PDF.WindowSize = 20
+	}
 
 	// Provider defaults
 	if cfg.Providers.NVIDIA.Type == "" {

@@ -41,23 +41,55 @@ type PageImage struct {
 //  2. a binary shipped in the project's ./bin directory,
 //  3. any directory on PATH.
 //
+// resolveBinary finds the absolute path of a tool in this priority order:
+//  1. explicit config override (BinPath / InfoBinPath),
+//  2. a binary shipped in the project's ./bin directory,
+//  3. any directory on PATH.
+//
+// Candidate paths must resolve to an executable regular file; otherwise the
+// candidate is skipped so a corrupt/leftover file in ./bin does not produce a
+// confusing fork/exec error and the next candidate is tried instead.
 // notFoundMsg formats a helpful, install-oriented message when nothing is found.
 func (r *PDFRenderer) resolveBinary(name, override string) (string, error) {
+	// 1. Explicit override: trust the user but still require it to be executable.
 	if override != "" {
-		if _, err := os.Stat(override); err == nil {
-			return override, nil
+		if p, ok := usableBinary(override); ok {
+			return p, nil
 		}
+		// If the override is just a name (not a path), fall through to LookPath.
 		if p, err := exec.LookPath(override); err == nil {
 			return p, nil
 		}
 	}
+	// 2. Project ./bin/<name>.
 	if p := inProjectBin(name); p != "" {
-		return p, nil
+		if usable, ok := usableBinary(p); ok {
+			return usable, nil
+		}
 	}
+	// 3. PATH.
 	if p, err := exec.LookPath(name); err == nil {
 		return p, nil
 	}
 	return "", fmt.Errorf("%s", missingToolMsg(name))
+}
+
+// usableBinary returns (cleaned path, true) when path exists, is a regular
+// file, and is executable by the current user. Otherwise ( "", false).
+func usableBinary(path string) (string, bool) {
+	info, err := os.Stat(path)
+	if err != nil {
+		return "", false
+	}
+	if info.IsDir() {
+		return "", false
+	}
+	// Require at least the user-execute bit; cross-user exec is covered by
+	// exec.LookPath semantics on the next tier when this is from override.
+	if info.Mode().Perm()&0o100 == 0 {
+		return "", false
+	}
+	return path, true
 }
 
 // CountPages returns the number of pages in a PDF.
@@ -90,7 +122,11 @@ func (r *PDFRenderer) CountPages(pdfPath string) (int, error) {
 // Render converts a PDF into one image per page and returns the page list.
 // The caller is responsible for cleaning up the returned page files via
 // Cleanup(). The temp directory used is also tracked for removal.
-func (r *PDFRenderer) Render(pdfPath string) ([]PageImage, string, error) {
+//
+// first and last narrow the page range to render (1-based; 0 means unbounded
+// on that end), enabling the CLI to process large PDFs in chunks. When both
+// are 0 the whole document is rendered (still subject to cfg.MaxPages).
+func (r *PDFRenderer) Render(pdfPath string, first, last int) ([]PageImage, string, error) {
 	if _, err := os.Stat(pdfPath); err != nil {
 		return nil, "", fmt.Errorf("pdf not found: %w", err)
 	}
@@ -105,7 +141,7 @@ func (r *PDFRenderer) Render(pdfPath string) ([]PageImage, string, error) {
 		return nil, "", fmt.Errorf("failed to create temp dir: %w", err)
 	}
 
-	if err := r.renderWith(tool, bin, pdfPath, tmpDir); err != nil {
+	if err := r.renderWith(tool, bin, pdfPath, tmpDir, first, last); err != nil {
 		os.RemoveAll(tmpDir)
 		return nil, "", err
 	}
@@ -158,7 +194,9 @@ func (r *PDFRenderer) resolveTool() (name string, bin string, err error) {
 }
 
 // renderWith invokes the chosen renderer to produce images in tmpDir.
-func (r *PDFRenderer) renderWith(name, bin, pdfPath, tmpDir string) error {
+// first/last narrow the page range (1-based, 0 = unbounded); cfg.MaxPages
+// is applied afterwards in collectPages-style trimming as a safety cap.
+func (r *PDFRenderer) renderWith(name, bin, pdfPath, tmpDir string, first, last int) error {
 	dpi := r.cfg.DPI
 	if dpi <= 0 {
 		dpi = 200
@@ -166,14 +204,23 @@ func (r *PDFRenderer) renderWith(name, bin, pdfPath, tmpDir string) error {
 	prefix := filepath.Join(tmpDir, "page")
 	outPrefix := prefix + "-"
 
+	// Build the effective last page: explicit CLI last, else cfg.MaxPages, else 0.
+	maxLast := last
+	if maxLast == 0 && r.cfg.MaxPages > 0 && (first <= 1 || first == 0) {
+		maxLast = r.cfg.MaxPages
+	}
+
 	switch name {
 	case "pdftoppm":
 		args := []string{
 			"-r", strconv.Itoa(dpi),
 			"-png",
 		}
-		if r.cfg.MaxPages > 0 {
-			args = append(args, "-l", strconv.Itoa(r.cfg.MaxPages))
+		if first > 0 {
+			args = append(args, "-f", strconv.Itoa(first))
+		}
+		if maxLast > 0 {
+			args = append(args, "-l", strconv.Itoa(maxLast))
 		}
 		args = append(args, pdfPath, prefix)
 		cmd := exec.Command(bin, args...)
@@ -190,7 +237,22 @@ func (r *PDFRenderer) renderWith(name, bin, pdfPath, tmpDir string) error {
 		}
 		pattern := outPrefix + "%d." + format
 		args := []string{"draw", "-o", pattern, "-r", strconv.Itoa(dpi)}
-		if r.cfg.MaxPages > 0 {
+		// mutool uses a "first-last" range selector.
+		if first > 0 || maxLast > 0 {
+			lo := first
+			if lo < 1 {
+				lo = 1
+			}
+			hi := maxLast
+			if hi < 1 {
+				hi = 0 // open-ended
+			}
+			if hi > 0 {
+				args = append(args, fmt.Sprintf("%d-%d", lo, hi))
+			} else {
+				args = append(args, fmt.Sprintf("%d-N", lo))
+			}
+		} else if r.cfg.MaxPages > 0 {
 			args = append(args, "1-"+strconv.Itoa(r.cfg.MaxPages))
 		}
 		args = append(args, pdfPath)

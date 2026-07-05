@@ -5,6 +5,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
+	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 	"ocr-router/internal/config"
@@ -15,7 +18,7 @@ import (
 var recognizeCmd = &cobra.Command{
 	Use:   "recognize [file path]",
 	Short: "Recognize text in an image or PDF",
-	Long:  "Perform OCR recognition on a single image or PDF file. PDFs are rasterized page-by-page and the text is concatenated.",
+	Long:  "Perform OCR recognition on a single image or PDF file. PDFs are rasterized in a sliding window (pdf.window_size), and text is concatenated with one progress line per page (like batch).",
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		imagePath := args[0]
@@ -25,6 +28,9 @@ var recognizeCmd = &cobra.Command{
 		provider, _ := cmd.Flags().GetString("provider")
 		prompt, _ := cmd.Flags().GetString("prompt")
 		outputFormat, _ := cmd.Flags().GetString("format")
+		first, _ := cmd.Flags().GetInt("first")
+		last, _ := cmd.Flags().GetInt("last")
+		window, _ := cmd.Flags().GetInt("window")
 
 		// Load config
 		cfg, err := config.Load(configFile)
@@ -39,41 +45,134 @@ var recognizeCmd = &cobra.Command{
 		}
 		defer log.Close()
 
-		// Create providers
+		// Create providers and engine
 		providers := createProviders(cfg, log)
-
-		// Create evaluator
 		evaluator := ocr.NewEvaluator(cfg.Evaluator, log)
-
-		// Create fallback engine
 		engine := ocr.NewFallbackEngine(providers, cfg.Fallback, evaluator, log)
 
-		// Build request
-		req := &ocr.OCRRequest{
-			ImagePath: imagePath,
-			Prompt:    prompt,
-		}
-
-		// If provider specified, use only that provider
-		if provider != "" {
-			if p, ok := providers[provider]; ok {
-				result, err := p.Recognize(context.Background(), req)
-				if err != nil {
-					return fmt.Errorf("OCR failed: %w", err)
+		// Image (non-PDF): unchanged single-shot path.
+		if !ocr.IsPDF(imagePath) {
+			req := &ocr.OCRRequest{ImagePath: imagePath, Prompt: prompt}
+			if provider != "" {
+				if p, ok := providers[provider]; ok {
+					result, err := p.Recognize(context.Background(), req)
+					if err != nil {
+						return fmt.Errorf("OCR failed: %w", err)
+					}
+					return outputResult(result, outputFormat)
 				}
-				return outputResult(result, outputFormat)
+				return fmt.Errorf("provider not found: %s", provider)
 			}
-			return fmt.Errorf("provider not found: %s", provider)
+			result, err := engine.Recognize(context.Background(), req)
+			if err != nil {
+				return fmt.Errorf("OCR failed: %w", err)
+			}
+			return outputResult(result, outputFormat)
 		}
 
-		// Use fallback engine
-		result, err := engine.Recognize(context.Background(), req)
+		// PDF: sliding-window rasterize + per-page OCR, streaming progress.
+		if !cfg.PDF.Enabled {
+			return fmt.Errorf("pdf support is disabled in config (set pdf.enabled: true)")
+		}
+		renderer := ocr.NewPDFRenderer(cfg.PDF)
+		win := window
+		if win <= 0 {
+			win = cfg.PDF.WindowSize
+		}
+		if win < 1 {
+			win = 1
+		}
+
+		totalPages, _ := renderer.CountPages(imagePath)
+		if totalPages == 0 {
+			// Proceed best-effort; window loop self-terminates on the tail.
+			fmt.Fprintln(os.Stderr, "[pdf] page count unknown; rendering from requested range")
+		}
+		if first < 0 {
+			first = 0
+		}
+		if last < 0 {
+			last = 0
+		}
+		hi := last
+		if hi == 0 {
+			hi = totalPages
+		}
+		fmt.Fprintf(os.Stderr, "[pdf] %s: %d pages requested, window=%d\n", baseName(imagePath), hi-first+1, win)
+
+		req := &ocr.OCRRequest{Prompt: prompt}
+		var combined strings.Builder
+		pageDone := 0
+
+		err = processPDFWithWindow(renderer, imagePath, first, last, win, totalPages, func(task FileTask) error {
+			req.ImagePath = task.ImagePath
+			var r *ocr.OCRResult
+			var e error
+			if provider != "" {
+				if p, ok := providers[provider]; ok {
+					r, e = p.Recognize(context.Background(), req)
+				} else {
+					return fmt.Errorf("provider not found: %s", provider)
+				}
+			} else {
+				r, e = engine.Recognize(context.Background(), req)
+			}
+			pageDone++
+			if e != nil {
+				fmt.Fprintf(os.Stderr, "✗ %s page %d: %s\n", baseName(imagePath), task.PageNum, e)
+				return nil // continue, like batch
+			}
+			if combined.Len() > 0 {
+				combined.WriteString("\n\n")
+			}
+			combined.WriteString(r.Text)
+			fmt.Fprintf(os.Stderr, "✓ %s page %d (%d chars)\n", baseName(imagePath), task.PageNum, len(r.Text))
+			return nil
+		})
 		if err != nil {
-			return fmt.Errorf("OCR failed: %w", err)
+			return err
 		}
 
-		return outputResult(result, outputFormat)
+		text := combined.String()
+		if text == "" {
+			return fmt.Errorf("no text recognized")
+		}
+		if window_count_more_than_one(first, hi) {
+			// keep header optional; skip it for clean single-page output
+		}
+		r := &ocr.OCRResult{
+			Provider:  provider,
+			Text:      text,
+			Timestamp: time.Now(),
+			Metadata: map[string]interface{}{
+				"is_pdf":       true,
+				"pages":        pageDone,
+				"source_file":  imagePath,
+				"window_first": first,
+				"window_last":  last,
+				"window_size":  win,
+			},
+		}
+		return outputResult(r, outputFormat)
 	},
+}
+
+func window_count_more_than_one(first, hi int) bool {
+	return hi == 0 || hi-first > 0
+}
+
+func baseName(p string) string {
+	n := p
+	for i := len(p) - 1; i >= 0; i-- {
+		if p[i] == '/' || p[i] == filepath.Separator {
+			n = p[i+1:]
+			break
+		}
+	}
+	if ext := filepath.Ext(n); ext != "" {
+		n = n[:len(n)-len(ext)]
+	}
+	return n
 }
 
 func init() {
@@ -81,6 +180,9 @@ func init() {
 	recognizeCmd.Flags().StringP("provider", "p", "", "OCR provider to use")
 	recognizeCmd.Flags().StringP("prompt", "", "", "Custom prompt for OCR")
 	recognizeCmd.Flags().StringP("format", "f", "text", "Output format (text, json)")
+	recognizeCmd.Flags().Int("first", 0, "PDF first page to process (1-based; 0=from start)")
+	recognizeCmd.Flags().Int("last", 0, "PDF last page to process (1-based; 0=to end)")
+	recognizeCmd.Flags().Int("window", 0, "PDF window size: pages rasterized at a time (overrides pdf.window_size; default 20)")
 }
 
 func outputResult(result *ocr.OCRResult, format string) error {

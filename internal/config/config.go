@@ -34,6 +34,10 @@ type PDFConfig struct {
 	TempDir string `yaml:"temp_dir"`
 	// JPEGQuality (1-95) used when Format == "jpeg". Default 85.
 	JPEGQuality int `yaml:"jpeg_quality"`
+	// WindowSize is the sliding-window page count: at most this many rendered
+	// pages live on disk at once during a large-PDF OCR run. 0 = auto (20).
+	// Larger windows reduce renderer restart latency but use more disk.
+	WindowSize int `yaml:"window_size"`
 }
 
 type ServerConfig struct {

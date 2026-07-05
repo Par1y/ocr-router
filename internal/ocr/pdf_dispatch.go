@@ -48,6 +48,16 @@ func paginate(
 	var firstErr error
 
 	for _, pg := range pages {
+		// Honour context cancellation: stop rendering more pages and surface
+		// the cancel/error so callers (e.g. FallbackEngine) can react instead
+		// of treating partial output as the final result.
+		if err := ctx.Err(); err != nil {
+			if firstErr == nil {
+				firstErr = err
+			}
+			break
+		}
+
 		pageReq := *req
 		pageReq.ImagePath = pg.Path
 
@@ -60,6 +70,10 @@ func paginate(
 			if firstErr == nil {
 				firstErr = err
 			}
+			if ctx.Err() != nil {
+				// Do not keep hammering a cancelled context.
+				break
+			}
 			continue
 		}
 		parts = append(parts, r.Text)
@@ -68,6 +82,12 @@ func paginate(
 			"text_length": len(r.Text),
 			"duration":    r.Duration.String(),
 		})
+	}
+
+	// If the context was cancelled, propagate the cancellation even when some
+	// pages succeeded, so upstream retry/fallback logic sees the failure.
+	if cerr := ctx.Err(); cerr != nil {
+		return nil, fmt.Errorf("pdf ocr cancelled: %w", cerr)
 	}
 
 	text := strings.Join(parts, "\n\n")

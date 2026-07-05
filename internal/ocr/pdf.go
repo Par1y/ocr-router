@@ -66,9 +66,9 @@ func (r *PDFRenderer) resolveBinary(name, override string) (string, error) {
 func (r *PDFRenderer) CountPages(pdfPath string) (int, error) {
 	bin, err := r.resolveBinary("pdfinfo", r.cfg.InfoBinPath)
 	if err != nil {
+		// pdfinfo is optional; absence is not a hard error.
 		return 0, nil
 	}
-	_ = err
 
 	cmd := exec.Command(bin, pdfPath)
 	out, err := cmd.Output()
@@ -132,23 +132,23 @@ func (r *PDFRenderer) Render(pdfPath string) ([]PageImage, string, error) {
 //  1. explicit config (cfg.Tool + cfg.BinPath), validated to exist;
 //  2. ./bin/<tool> shipped with the project;
 //  3. PATH lookup; first of pdftoppm, then mutool.
+//
+// When cfg.Tool is set but that specific tool cannot be found, the function
+// returns an error rather than silently falling back to another tool, so the
+// user's explicit choice is respected.
 func (r *PDFRenderer) resolveTool() (name string, bin string, err error) {
-	candidates := []string{r.cfg.Tool, "pdftoppm", "mutool"}
-	if r.cfg.Tool == "" {
-		candidates = []string{"pdftoppm", "mutool"}
+	// Explicit configured tool: must exist, do not fall back.
+	if r.cfg.Tool != "" {
+		p, e := r.resolveBinary(r.cfg.Tool, r.cfg.BinPath)
+		if e != nil {
+			return "", "", fmt.Errorf("configured pdf.tool %q not found: %v", r.cfg.Tool, e)
+		}
+		return r.cfg.Tool, p, nil
 	}
 
-	tried := map[string]bool{}
-	for _, c := range candidates {
-		if c == "" || tried[c] {
-			continue
-		}
-		tried[c] = true
-		override := ""
-		if c == r.cfg.Tool {
-			override = r.cfg.BinPath
-		}
-		if p, e := r.resolveBinary(c, override); e == nil {
+	// Auto-detect: prefer pdftoppm, then mutool.
+	for _, c := range []string{"pdftoppm", "mutool"} {
+		if p, e := r.resolveBinary(c, ""); e == nil {
 			return c, p, nil
 		}
 	}

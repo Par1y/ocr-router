@@ -18,6 +18,7 @@ type LLMVisionProvider struct {
 	config config.ProviderConfig
 	logger *logger.Logger
 	client *http.Client
+	pdf    *PDFRenderer
 }
 
 // LLMVisionRequest represents the OpenAI-compatible chat completion request
@@ -61,10 +62,11 @@ type Message struct {
 }
 
 // NewLLMVisionProvider creates a new LLM Vision provider
-func NewLLMVisionProvider(cfg config.ProviderConfig, log *logger.Logger) *LLMVisionProvider {
+func NewLLMVisionProvider(cfg config.ProviderConfig, log *logger.Logger, pdf *PDFRenderer) *LLMVisionProvider {
 	return &LLMVisionProvider{
 		config: cfg,
 		logger: log,
+		pdf:    pdf,
 		client: &http.Client{
 			Timeout: 120 * time.Second,
 		},
@@ -83,6 +85,12 @@ func (p *LLMVisionProvider) Type() ProviderType {
 
 // Recognize performs OCR recognition using an OpenAI-compatible vision API
 func (p *LLMVisionProvider) Recognize(ctx context.Context, req *OCRRequest) (*OCRResult, error) {
+	start := time.Now()
+	return paginate(ctx, p.pdf, p.recognizeImage, p.Name(), req, start)
+}
+
+// recognizeImage performs OCR on a single image (non-PDF).
+func (p *LLMVisionProvider) recognizeImage(ctx context.Context, req *OCRRequest) (*OCRResult, error) {
 	start := time.Now()
 
 	// Get prompt

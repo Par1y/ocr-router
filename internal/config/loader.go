@@ -118,6 +118,17 @@ func setDefaults(cfg *Config) {
 		cfg.Logging.Format = "json"
 	}
 
+	// PDF defaults
+	if cfg.PDF.DPI == 0 {
+		cfg.PDF.DPI = 200
+	}
+	if cfg.PDF.Format == "" {
+		cfg.PDF.Format = "png"
+	}
+	if cfg.PDF.JPEGQuality == 0 {
+		cfg.PDF.JPEGQuality = 85
+	}
+
 	// Provider defaults
 	if cfg.Providers.NVIDIA.Type == "" {
 		cfg.Providers.NVIDIA.Type = "nvidia"

@@ -13,9 +13,9 @@ import (
 )
 
 var recognizeCmd = &cobra.Command{
-	Use:   "recognize [image path]",
-	Short: "Recognize text in an image",
-	Long:  "Perform OCR recognition on a single image.",
+	Use:   "recognize [file path]",
+	Short: "Recognize text in an image or PDF",
+	Long:  "Perform OCR recognition on a single image or PDF file. PDFs are rasterized page-by-page and the text is concatenated.",
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		imagePath := args[0]
@@ -132,21 +132,28 @@ func outputResult(result *ocr.OCRResult, format string) error {
 }
 
 func createProviders(cfg *config.Config, log *logger.Logger) map[string]ocr.Provider {
+	// Build the optional PDF renderer. We pass the same instance to every
+	// provider so tool detection runs only once. The renderer is stateless.
+	var pdfRenderer *ocr.PDFRenderer
+	if cfg.PDF.Enabled {
+		pdfRenderer = ocr.NewPDFRenderer(cfg.PDF)
+	}
+
 	providers := make(map[string]ocr.Provider)
 
 	// NVIDIA provider
 	if cfg.Providers.NVIDIA.Enabled {
-		providers["nvidia"] = ocr.NewNVIDIAProvider(cfg.Providers.NVIDIA, log)
+		providers["nvidia"] = ocr.NewNVIDIAProvider(cfg.Providers.NVIDIA, log, pdfRenderer)
 	}
 
 	// LLM Vision provider
 	if cfg.Providers.LLMVision.Enabled {
-		providers["llm_vision"] = ocr.NewLLMVisionProvider(cfg.Providers.LLMVision, log)
+		providers["llm_vision"] = ocr.NewLLMVisionProvider(cfg.Providers.LLMVision, log, pdfRenderer)
 	}
 
 	// Browser SSE provider
 	if cfg.Providers.BrowserSSE.Enabled {
-		providers["browser_sse"] = ocr.NewBrowserSSEProvider(cfg.Providers.BrowserSSE, log)
+		providers["browser_sse"] = ocr.NewBrowserSSEProvider(cfg.Providers.BrowserSSE, log, pdfRenderer)
 	}
 
 	return providers

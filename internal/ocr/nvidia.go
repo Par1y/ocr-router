@@ -16,9 +16,10 @@ import (
 
 // NVIDIAProvider implements the NVIDIA Nemotron OCR v2 API
 type NVIDIAProvider struct {
-	config config.ProviderConfig
-	logger *logger.Logger
-	client *http.Client
+	config   config.ProviderConfig
+	logger  *logger.Logger
+	client  *http.Client
+	pdf     *PDFRenderer
 }
 
 // NVIDIARequest represents the NVIDIA OCR API request
@@ -53,10 +54,11 @@ type TextPrediction struct {
 }
 
 // NewNVIDIAProvider creates a new NVIDIA OCR provider
-func NewNVIDIAProvider(cfg config.ProviderConfig, log *logger.Logger) *NVIDIAProvider {
+func NewNVIDIAProvider(cfg config.ProviderConfig, log *logger.Logger, pdf *PDFRenderer) *NVIDIAProvider {
 	return &NVIDIAProvider{
 		config: cfg,
 		logger: log,
+		pdf:    pdf,
 		client: &http.Client{
 			Timeout: 120 * time.Second,
 		},
@@ -75,6 +77,12 @@ func (p *NVIDIAProvider) Type() ProviderType {
 
 // Recognize performs OCR recognition using NVIDIA Nemotron OCR v2
 func (p *NVIDIAProvider) Recognize(ctx context.Context, req *OCRRequest) (*OCRResult, error) {
+	start := time.Now()
+	return paginate(ctx, p.pdf, p.recognizeImage, p.Name(), req, start)
+}
+
+// recognizeImage performs OCR on a single image (non-PDF).
+func (p *NVIDIAProvider) recognizeImage(ctx context.Context, req *OCRRequest) (*OCRResult, error) {
 	start := time.Now()
 
 	// Encode image

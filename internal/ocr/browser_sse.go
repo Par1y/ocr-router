@@ -25,13 +25,15 @@ type BrowserSSEProvider struct {
 	config config.ProviderConfig
 	logger *logger.Logger
 	client *http.Client
+	pdf    *PDFRenderer
 }
 
 // NewBrowserSSEProvider creates a new browser SSE provider
-func NewBrowserSSEProvider(cfg config.ProviderConfig, log *logger.Logger) *BrowserSSEProvider {
+func NewBrowserSSEProvider(cfg config.ProviderConfig, log *logger.Logger, pdf *PDFRenderer) *BrowserSSEProvider {
 	return &BrowserSSEProvider{
 		config: cfg,
 		logger: log,
+		pdf:    pdf,
 		client: &http.Client{
 			Timeout: 300 * time.Second,
 		},
@@ -50,6 +52,12 @@ func (p *BrowserSSEProvider) Type() ProviderType {
 
 // Recognize performs OCR recognition using browser-based SSE (dots.mocr Gradio API)
 func (p *BrowserSSEProvider) Recognize(ctx context.Context, req *OCRRequest) (*OCRResult, error) {
+	start := time.Now()
+	return paginate(ctx, p.pdf, p.recognizeImage, p.Name(), req, start)
+}
+
+// recognizeImage performs OCR on a single image (non-PDF).
+func (p *BrowserSSEProvider) recognizeImage(ctx context.Context, req *OCRRequest) (*OCRResult, error) {
 	start := time.Now()
 
 	p.logger.Debug("BrowserSSE: Starting recognition", &logger.LogEntry{

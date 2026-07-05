@@ -10,6 +10,7 @@
 - **尝试记录**: 记录每次OCR尝试的评分，便于对比分析
 - **异步任务**: 支持异步OCR任务处理
 - **CLI和WebUI**: 提供命令行和Web界面，功能同步
+- **PDF支持**: 支持把多页PDF栅格化为图片后逐页识别再拼接，CLI/API/Batch 均可直接输入 `.pdf`
 
 ## 快速开始
 
@@ -50,12 +51,37 @@ export STEP_API_KEY="your-step-api-key"
 # 批量识别并保存JSON
 ./bin/ocr-cli batch ./images/ --workers 3 --save-json
 
+# 识别 PDF（全部命名支持，自动逐页栅格化后拼接）
+./bin/ocr-cli recognize ./doc.pdf
+
+# 批量识别目录（同时包含图片和 PDF）
+./bin/ocr-cli batch ./files/ --workers 2
+
 # 查看Provider状态
 ./bin/ocr-cli providers
 
 # 启动HTTP服务器
 ./bin/ocr-cli serve --port 8080
 ```
+
+#### PDF 支持
+
+`recognize` / `batch` / API 均可直接接收 `.pdf`。项目通过外部渲染器把每页栅格化为图片后再交给已有 OCR Provider。渲染工具按以下顺序探测：
+
+1. `pdf.bin_path` 指定的二进制；
+2. 项目 `./bin/` 下的同名二进制（可 LPC 自带，无需系统安装）；
+3. 系统 `PATH`，优先 `pdftoppm`，其次 `mutool`。
+
+两者均不可用时会打印对应平台的安装命令提示，例如：
+
+- Linux: `sudo apt-get install -y poppler-utils`
+- macOS: `brew install poppler`
+- Windows: `choco install poppler`
+- mupdf: `mutool` 来自 `mupdf-tools`，命令同上把 poppler 换成 mupdf 即可
+
+不想覆盖系统 PATH 时，把 `pdftoppm` 或 `mutool` 单个二进制放进项目 `./bin/` 即可被自动识别，无需配置。
+
+相关配置见 `config.yaml` 的 `pdf:` 段：可调 DPI、`max_pages`、输出格式（png/jpeg）等。
 
 ### 3. 使用WebUI
 
@@ -70,6 +96,8 @@ curl -X POST http://localhost:8080/api/ocr/sync \
   -H "Content-Type: application/json" \
   -d '{"image_path": "./001.png"}'
 ```
+
+`image_path` 可以是图片或 `.pdf` 文件；PDF 会被逐页识别后拼接返回。
 
 ### 异步OCR
 

@@ -6,6 +6,23 @@ storage:
   base_dir: "./ocr_output"
   format: "both" # text, json, both
 
+# PDF 输入支持。
+# 启用后，CLI/API 可直接识别 .pdf 文件：项目会把每页栅格化为图片，
+# 依次交给已有 OCR Provider，再拼接为完整文本。
+# 渲染工具按以下顺序探测：显式 bin_path → 项目 ./bin/ → 系统 PATH。
+# 若探测不到会打印相应安装命令提示。
+pdf:
+  enabled: true
+  # 渲染器：留空自动探测（pdftoppm 优先，其次 mutool）。
+  tool: ""          # "" | "pdftoppm" | "mutool"
+  bin_path: ""      # 渲染器二进制绝对/相对路径，留空走 PATH
+  info_bin_path: "" # pdfinfo 路径，留空走 PATH（仅用于页数统计）
+  dpi: 200          # 渲染分辨率，越大越清晰也越慢
+  max_pages: 0      # 最多渲染页数，0 = 不限制
+  format: "png"     # 渲染格式：png 或 jpeg
+  jpeg_quality: 85  # 当 format=jpeg 时生效
+  temp_dir: ""      # 渲染临时目录，留空 = 系统默认
+
 providers:
   nvidia:
     type: "nvidia"

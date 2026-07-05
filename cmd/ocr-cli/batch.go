@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -18,7 +19,7 @@ import (
 var batchCmd = &cobra.Command{
 	Use:   "batch [directory]",
 	Short: "Batch OCR recognition",
-	Long:  "Perform OCR recognition on all images in a directory.",
+	Long:  "Perform OCR recognition on all images and PDF files in a directory. PDFs are rasterized page-by-page.",
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		dir := args[0]
@@ -250,6 +251,7 @@ func findImages(dir string, recursive bool) ([]string, error) {
 		".jpeg": true,
 		".webp": true,
 		".bmp":  true,
+		".pdf":  true,
 	}
 
 	if recursive {
@@ -258,7 +260,7 @@ func findImages(dir string, recursive bool) ([]string, error) {
 				return err
 			}
 			if !info.IsDir() {
-				ext := filepath.Ext(path)
+				ext := strings.ToLower(filepath.Ext(path))
 				if extensions[ext] {
 					images = append(images, path)
 				}
@@ -275,7 +277,7 @@ func findImages(dir string, recursive bool) ([]string, error) {
 
 	for _, entry := range entries {
 		if !entry.IsDir() {
-			ext := filepath.Ext(entry.Name())
+			ext := strings.ToLower(filepath.Ext(entry.Name()))
 			if extensions[ext] {
 				images = append(images, filepath.Join(dir, entry.Name()))
 			}

@@ -28,9 +28,16 @@ var recognizeCmd = &cobra.Command{
 		provider, _ := cmd.Flags().GetString("provider")
 		prompt, _ := cmd.Flags().GetString("prompt")
 		outputFormat, _ := cmd.Flags().GetString("format")
+		outputDir, _ := cmd.Flags().GetString("output-dir")
+		saveJSON := outputFormat == "json"
 		first, _ := cmd.Flags().GetInt("first")
 		last, _ := cmd.Flags().GetInt("last")
 		window, _ := cmd.Flags().GetInt("window")
+
+		// Validate flags
+		if outputFormat != "text" && outputFormat != "json" {
+			return fmt.Errorf("unknown format: %s", outputFormat)
+		}
 
 		// Load config
 		cfg, err := config.Load(configFile)
@@ -50,24 +57,32 @@ var recognizeCmd = &cobra.Command{
 		evaluator := ocr.NewEvaluator(cfg.Evaluator, log)
 		engine := ocr.NewFallbackEngine(providers, cfg.Fallback, evaluator, log)
 
-		// Image (non-PDF): unchanged single-shot path.
+		// Resolve output dir: explicit flag, else <input dir>/ocr_results.
+		if outputDir == "" {
+			inputDir := filepath.Dir(imagePath)
+			outputDir = filepath.Join(inputDir, "ocr_results")
+		}
+		if err := os.MkdirAll(outputDir, 0755); err != nil {
+			return fmt.Errorf("failed to create output dir %q: %w", outputDir, err)
+		}
+
+		// Image (non-PDF): single-shot OCR then write to file.
 		if !ocr.IsPDF(imagePath) {
 			req := &ocr.OCRRequest{ImagePath: imagePath, Prompt: prompt}
+			var result *ocr.OCRResult
 			if provider != "" {
 				if p, ok := providers[provider]; ok {
-					result, err := p.Recognize(context.Background(), req)
-					if err != nil {
-						return fmt.Errorf("OCR failed: %w", err)
-					}
-					return outputResult(result, outputFormat)
+					result, err = p.Recognize(context.Background(), req)
+				} else {
+					return fmt.Errorf("provider not found: %s", provider)
 				}
-				return fmt.Errorf("provider not found: %s", provider)
+			} else {
+				result, err = engine.Recognize(context.Background(), req)
 			}
-			result, err := engine.Recognize(context.Background(), req)
 			if err != nil {
 				return fmt.Errorf("OCR failed: %w", err)
 			}
-			return outputResult(result, outputFormat)
+			return saveOCRResult(result, outputDir, baseName(imagePath), saveJSON)
 		}
 
 		// PDF: sliding-window rasterize + per-page OCR, streaming progress.
@@ -104,9 +119,9 @@ var recognizeCmd = &cobra.Command{
 		var combined strings.Builder
 		pageDone := 0
 		pageSuccess := 0
-		var usedProvider string       // provider that actually ran the first page
-		var evalSum float64           // summed evaluation scores across pages
-		var evalCount int             // number of pages that had an evaluation
+		var usedProvider string // provider that actually ran the first page
+		var evalSum float64     // summed evaluation scores across pages
+		var evalCount int       // number of pages that had an evaluation
 		var allAttempts []ocr.AttemptRecord
 
 		err = processPDFWithWindow(renderer, imagePath, first, last, win, totalPages, func(task FileTask) error {
@@ -159,25 +174,25 @@ var recognizeCmd = &cobra.Command{
 			Attempts:  allAttempts,
 			Timestamp: time.Now(),
 			Metadata: map[string]interface{}{
-				"is_pdf":         true,
-				"pages":          pageSuccess,
-				"pages_total":    pageDone,
-				"pages_failed":   pageDone - pageSuccess,
-				"source_file":    imagePath,
-				"window_first":   first,
-				"window_last":    last,
-				"window_size":    win,
+				"is_pdf":       true,
+				"pages":        pageSuccess,
+				"pages_total":  pageDone,
+				"pages_failed": pageDone - pageSuccess,
+				"source_file":  imagePath,
+				"window_first": first,
+				"window_last":  last,
+				"window_size":  win,
 			},
 		}
 		if evalCount > 0 {
-		avgScore := evalSum / float64(evalCount)
-		r.Evaluation = &ocr.EvaluationResult{
-			Score:  avgScore,
-			Reason: fmt.Sprintf("average across %d pages", evalCount),
-			Pass:   avgScore >= cfg.Evaluator.Threshold,
+			avgScore := evalSum / float64(evalCount)
+			r.Evaluation = &ocr.EvaluationResult{
+				Score:  avgScore,
+				Reason: fmt.Sprintf("average across %d pages", evalCount),
+				Pass:   avgScore >= cfg.Evaluator.Threshold,
+			}
 		}
-		}
-		return outputResult(r, outputFormat)
+		return saveOCRResult(r, outputDir, baseName(imagePath), saveJSON)
 	},
 }
 
@@ -200,57 +215,81 @@ func init() {
 	recognizeCmd.Flags().StringP("provider", "p", "", "OCR provider to use")
 	recognizeCmd.Flags().StringP("prompt", "", "", "Custom prompt for OCR")
 	recognizeCmd.Flags().StringP("format", "f", "text", "Output format (text, json)")
+	recognizeCmd.Flags().StringP("output-dir", "o", "", "Output directory (default: <input dir>/ocr_results)")
 	recognizeCmd.Flags().Int("first", 0, "PDF first page to process (1-based; 0=from start)")
 	recognizeCmd.Flags().Int("last", 0, "PDF last page to process (1-based; 0=to end)")
 	recognizeCmd.Flags().Int("window", 0, "PDF window size: pages rasterized at a time (overrides pdf.window_size; default 20)")
 }
 
-func outputResult(result *ocr.OCRResult, format string) error {
-	switch format {
-	case "json":
-		encoder := json.NewEncoder(os.Stdout)
-		encoder.SetIndent("", "  ")
-		return encoder.Encode(result)
-	case "text":
-		fmt.Println(result.Text)
-
-		// Show attempts if any
-		if len(result.Attempts) > 0 {
-			fmt.Fprintf(os.Stderr, "\n--- 尝试记录 ---\n")
-			for _, attempt := range result.Attempts {
-				status := "✓"
-				if !attempt.Passed {
-					status = "✗"
-				}
-				scoreStr := "-"
-				if attempt.Score > 0 {
-					scoreStr = fmt.Sprintf("%.2f", attempt.Score)
-				}
-				errStr := ""
-				if attempt.Error != "" {
-					errStr = fmt.Sprintf(" (错误: %s)", attempt.Error)
-				}
-				fmt.Fprintf(os.Stderr, "  %s %s: %s%s\n", status, attempt.Provider, scoreStr, errStr)
-			}
-		}
-
-		// Show evaluation
-		if result.Evaluation != nil {
-			fmt.Fprintf(os.Stderr, "\n[最终评分: %.2f]\n", result.Evaluation.Score)
-		}
-
-		// Show quality warning
-		if result.QualityWarning {
-			fmt.Fprintf(os.Stderr, "[警告: 所有Provider都未能达到质量阈值]\n")
-			if result.BestScore > 0 {
-				fmt.Fprintf(os.Stderr, "[最佳评分: %.2f]\n", result.BestScore)
-			}
-		}
-
-		return nil
-	default:
-		return fmt.Errorf("unknown format: %s", format)
+// saveOCRResult writes the recognized text to <outputDir>/<baseName>.txt and,
+// when saveJSON is set, also writes the full OCRResult as
+// <outputDir>/<baseName>.json. Human-readable progress, attempt records and
+// the evaluation summary are printed to stderr so result text never leaks to
+// stdout. Returns nil on success or a wrapped write error.
+func saveOCRResult(result *ocr.OCRResult, outputDir, baseName string, saveJSON bool) error {
+	if outputDir == "" {
+		return fmt.Errorf("output dir is empty")
 	}
+	if err := os.MkdirAll(outputDir, 0755); err != nil {
+		return fmt.Errorf("failed to create output dir %q: %w", outputDir, err)
+	}
+
+	txtPath := filepath.Join(outputDir, baseName+".txt")
+	text := result.Text
+	if result.Evaluation != nil {
+		text += fmt.Sprintf("\n\n[Score: %.2f]", result.Evaluation.Score)
+	}
+	if err := os.WriteFile(txtPath, []byte(text), 0644); err != nil {
+		return fmt.Errorf("failed to save text result: %w", err)
+	}
+	fmt.Fprintf(os.Stderr, "✓ %s -> %s\n", baseName, txtPath)
+
+	if saveJSON {
+		jsonPath := filepath.Join(outputDir, baseName+".json")
+		jsonData, err := json.MarshalIndent(result, "", "  ")
+		if err != nil {
+			return fmt.Errorf("failed to marshal JSON: %w", err)
+		}
+		if err := os.WriteFile(jsonPath, jsonData, 0644); err != nil {
+			return fmt.Errorf("failed to save JSON result: %w", err)
+		}
+		fmt.Fprintf(os.Stderr, "✓ %s -> %s\n", baseName, jsonPath)
+	}
+
+	// Attempts summary (stderr only).
+	if len(result.Attempts) > 0 {
+		fmt.Fprintf(os.Stderr, "\n--- 尝试记录 ---\n")
+		for _, attempt := range result.Attempts {
+			status := "✓"
+			if !attempt.Passed {
+				status = "✗"
+			}
+			scoreStr := "-"
+			if attempt.Score > 0 {
+				scoreStr = fmt.Sprintf("%.2f", attempt.Score)
+			}
+			errStr := ""
+			if attempt.Error != "" {
+				errStr = fmt.Sprintf(" (错误: %s)", attempt.Error)
+			}
+			fmt.Fprintf(os.Stderr, "  %s %s: %s%s\n", status, attempt.Provider, scoreStr, errStr)
+		}
+	}
+
+	// Evaluation summary (stderr only).
+	if result.Evaluation != nil {
+		fmt.Fprintf(os.Stderr, "\n[最终评分: %.2f]\n", result.Evaluation.Score)
+	}
+
+	// Quality warning (stderr only).
+	if result.QualityWarning {
+		fmt.Fprintf(os.Stderr, "[警告: 所有Provider都未能达到质量阈值]\n")
+		if result.BestScore > 0 {
+			fmt.Fprintf(os.Stderr, "[最佳评分: %.2f]\n", result.BestScore)
+		}
+	}
+
+	return nil
 }
 
 func createProviders(cfg *config.Config, log *logger.Logger) map[string]ocr.Provider {

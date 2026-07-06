@@ -13,34 +13,34 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
       - name: Setup Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v6
         with:
-          go-version: '1.22'
+          go-version: '1.24'
+          cache: true
 
       - name: Build binaries
         run: |
+          set -e
+          mkdir -p bin
           # Linux amd64
-          GOOS=linux GOARCH=amd64 go build -o bin/ocr-cli-linux-amd64 ./cmd/ocr-cli
-          
+          GOOS=linux GOARCH=amd64 go build -trimpath -ldflags="-s -w" -o bin/ocr-cli-linux-amd64 ./cmd/ocr-cli
           # Linux arm64
-          GOOS=linux GOARCH=arm64 go build -o bin/ocr-cli-linux-arm64 ./cmd/ocr-cli
-          
+          GOOS=linux GOARCH=arm64 go build -trimpath -ldflags="-s -w" -o bin/ocr-cli-linux-arm64 ./cmd/ocr-cli
           # Windows amd64
-          GOOS=windows GOARCH=amd64 go build -o bin/ocr-cli-windows-amd64.exe ./cmd/ocr-cli
+          GOOS=windows GOARCH=amd64 go build -trimpath -ldflags="-s -w" -o bin/ocr-cli-windows-amd64.exe ./cmd/ocr-cli
 
       - name: Create archives
         run: |
+          set -e
           # Linux amd64
           tar -czf ocr-cli-linux-amd64.tar.gz -C bin ocr-cli-linux-amd64
-          
           # Linux arm64
           tar -czf ocr-cli-linux-arm64.tar.gz -C bin ocr-cli-linux-arm64
-          
           # Windows amd64
           zip -j ocr-cli-windows-amd64.zip bin/ocr-cli-windows-amd64.exe
 
@@ -49,7 +49,7 @@ jobs:
           sha256sum ocr-cli-*.tar.gz ocr-cli-*.zip > checksums.txt
 
       - name: Create Release
-        uses: softprops/action-gh-release@v1
+        uses: softprops/action-gh-release@v3
         with:
           files: |
             ocr-cli-linux-amd64.tar.gz

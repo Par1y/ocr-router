@@ -16,7 +16,7 @@
 
 ### 1. 配置
 
-编辑 `config.yaml` 文件，设置API密钥：
+复制 `config.yaml.example` 为 `config.yaml` 文件，并编辑设置API密钥：
 
 ```yaml
 providers:
@@ -69,8 +69,9 @@ export STEP_API_KEY="your-step-api-key"
 `recognize` / `batch` / API 均可直接接收 `.pdf`。项目通过外部渲染器把每页栅格化为图片后再交给已有 OCR Provider。渲染工具按以下顺序探测：
 
 1. `pdf.bin_path` 指定的二进制；
-2. 项目 `./bin/` 下的同名二进制（可 LPC 自带，无需系统安装）；
-3. 系统 `PATH`，优先 `pdftoppm`，其次 `mutool`。
+2. 系统 `PATH`，优先 `pdftoppm`，其次 `mutool`。
+
+> **Windows 用户**：Release 下载的 `ocr-cli-windows-amd64.zip` 已包含 `bin/` 目录，内置 `pdftoppm.exe` + `pdfinfo.exe`（poppler-utils）及必要 DLL，解压即用，无需额外安装。
 
 两者均不可用时会打印对应平台的安装命令提示，例如：
 
@@ -260,6 +261,16 @@ ocr-router/
 └── README.md
 ```
 
+## 感谢
+
+[poppler-utils](https://poppler.freedesktop.org/) (v24.08.0-0) | [GPLv2](https://gitlab.freedesktop.org/poppler/poppler/-/blob/master/COPYING)
+
+[MuPDF](https://mupdf.com/) (v1.25.1) | [AGPLv3](https://mupdf.com/license.html)
+
+Windows 打包的 poppler 二进制来自 [oschwartz10612/poppler-windows](https://github.com/oschwartz10612/poppler-windows)
+
 ## 许可证
 
-AGPLv3
+本项目源代码采用 AGPLv3 协议。
+
+Windows Release 中打包的 poppler-utils（pdftoppm/pdfinfo）遵循 **GPLv2**，mutool 遵循 **AGPLv3**。使用 Release 时请自行遵守上述组件的许可条款。

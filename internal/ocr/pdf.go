@@ -358,13 +358,28 @@ func Cleanup(dir string) {
 
 // inProjectBin checks for a tool shipped inside the project's ./bin directory
 // (with an OS-appropriate ".exe" suffix on Windows) and returns its absolute
-// path when present. The lookup walks up from the working directory until it
-// finds a "bin" sibling of "go.mod", so it also works from subdirectories.
+// path when present.
+//
+// Lookup order:
+//  1. bin/ directory relative to the running executable (release mode) —
+//     this makes a bundled ./bin folder work for end users who don't have
+//     go.mod in their working tree.
+//  2. Walk up from the working directory until a go.mod sibling of `bin/`
+//     is found (development mode).
 func inProjectBin(name string) string {
 	if runtime.GOOS == "windows" {
 		name += ".exe"
 	}
 
+	// 1. Executable-relative bin/ (release mode — no go.mod needed).
+	if exe, err := os.Executable(); err == nil {
+		candidate := filepath.Join(filepath.Dir(exe), "bin", name)
+		if info, err := os.Stat(candidate); err == nil && !info.IsDir() {
+			return candidate
+		}
+	}
+
+	// 2. Development mode: walk up from cwd looking for go.mod.
 	wd, err := os.Getwd()
 	if err != nil {
 		return ""

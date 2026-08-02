@@ -34,6 +34,26 @@ jobs:
           # Windows amd64
           GOOS=windows GOARCH=amd64 go build -trimpath -ldflags="-s -w" -o bin/ocr-cli-windows-amd64.exe ./cmd/ocr-cli
 
+      - name: Download Windows PDF tools
+        run: |
+          set -e
+          # Poppler-utils (pdftoppm.exe + pdfinfo.exe + required DLLs)
+          POPPLER_VERSION="24.08.0-0"
+          curl -sL "https://github.com/oschwartz10612/poppler-windows/releases/download/v${POPPLER_VERSION}/Release-${POPPLER_VERSION}.zip" \
+            -o poppler-win.zip
+          unzip -q poppler-win.zip -d poppler-tmp
+          mkdir -p bin/pdf-tools
+          cp poppler-tmp/poppler-*/Library/bin/* bin/pdf-tools/
+          rm -rf poppler-tmp poppler-win.zip
+
+          # MuPDF-tools (mutool.exe — fallback, best-effort)
+          MUPDF_VERSION="1.25.1"
+          curl -sL "https://mupdf.com/downloads/archive/mupdf-${MUPDF_VERSION}-windows-x64.zip" \
+            -o mupdf-win.zip && \
+          unzip -q -j mupdf-win.zip "*/mutool.exe" -d bin/pdf-tools/ || \
+            echo "::warning::mutool download failed — pdftoppm will be used instead"
+          rm -f mupdf-win.zip
+
       - name: Create archives
         run: |
           set -e
@@ -41,8 +61,11 @@ jobs:
           tar -czf ocr-cli-linux-amd64.tar.gz -C bin ocr-cli-linux-amd64
           # Linux arm64
           tar -czf ocr-cli-linux-arm64.tar.gz -C bin ocr-cli-linux-arm64
-          # Windows amd64
-          zip -j ocr-cli-windows-amd64.zip bin/ocr-cli-windows-amd64.exe
+          # Windows amd64 — bundle PDF tools in a bin/ subdirectory
+          mkdir -p win-release/bin
+          cp bin/ocr-cli-windows-amd64.exe win-release/
+          cp -r bin/pdf-tools/* win-release/bin/
+          cd win-release && zip -r ../ocr-cli-windows-amd64.zip . && cd ..
 
       - name: Generate checksums
         run: |

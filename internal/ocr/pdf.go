@@ -1,6 +1,7 @@
 package ocr
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"os/exec"
@@ -127,6 +128,14 @@ func (r *PDFRenderer) CountPages(pdfPath string) (int, error) {
 // on that end), enabling the CLI to process large PDFs in chunks. When both
 // are 0 the whole document is rendered (still subject to cfg.MaxPages).
 func (r *PDFRenderer) Render(pdfPath string, first, last int) ([]PageImage, string, error) {
+	return r.RenderContext(context.Background(), pdfPath, first, last)
+}
+
+// RenderContext is Render bound to a context: when ctx is cancelled the child
+// rasterizer process (and its process group on Unix) is killed and a render
+// error is returned. Use this on the extract path so SIGTERM/SIGINT cancellation
+// tears down in-flight rendering promptly instead of leaving orphaned processes.
+func (r *PDFRenderer) RenderContext(ctx context.Context, pdfPath string, first, last int) ([]PageImage, string, error) {
 	if _, err := os.Stat(pdfPath); err != nil {
 		return nil, "", fmt.Errorf("pdf not found: %w", err)
 	}
@@ -141,7 +150,7 @@ func (r *PDFRenderer) Render(pdfPath string, first, last int) ([]PageImage, stri
 		return nil, "", fmt.Errorf("failed to create temp dir: %w", err)
 	}
 
-	if err := r.renderWith(tool, bin, pdfPath, tmpDir, first, last); err != nil {
+	if err := r.renderWith(ctx, tool, bin, pdfPath, tmpDir, first, last); err != nil {
 		os.RemoveAll(tmpDir)
 		return nil, "", err
 	}
@@ -196,7 +205,7 @@ func (r *PDFRenderer) resolveTool() (name string, bin string, err error) {
 // renderWith invokes the chosen renderer to produce images in tmpDir.
 // first/last narrow the page range (1-based, 0 = unbounded); cfg.MaxPages
 // is applied afterwards in collectPages-style trimming as a safety cap.
-func (r *PDFRenderer) renderWith(name, bin, pdfPath, tmpDir string, first, last int) error {
+func (r *PDFRenderer) renderWith(ctx context.Context, name, bin, pdfPath, tmpDir string, first, last int) error {
 	dpi := r.cfg.DPI
 	if dpi <= 0 {
 		dpi = 200
@@ -223,8 +232,12 @@ func (r *PDFRenderer) renderWith(name, bin, pdfPath, tmpDir string, first, last 
 			args = append(args, "-l", strconv.Itoa(maxLast))
 		}
 		args = append(args, pdfPath, prefix)
-		cmd := exec.Command(bin, args...)
+		cmd := exec.CommandContext(ctx, bin, args...)
+		setProcGroup(cmd)
 		if out, err := cmd.CombinedOutput(); err != nil {
+			if ctx.Err() != nil {
+				return fmt.Errorf("pdftoppm cancelled: %w", ctx.Err())
+			}
 			return fmt.Errorf("pdftoppm failed: %w: %s", err, strings.TrimSpace(string(out)))
 		}
 		return nil
@@ -256,8 +269,12 @@ func (r *PDFRenderer) renderWith(name, bin, pdfPath, tmpDir string, first, last 
 			args = append(args, "1-"+strconv.Itoa(r.cfg.MaxPages))
 		}
 		args = append(args, pdfPath)
-		cmd := exec.Command(bin, args...)
+		cmd := exec.CommandContext(ctx, bin, args...)
+		setProcGroup(cmd)
 		if out, err := cmd.CombinedOutput(); err != nil {
+			if ctx.Err() != nil {
+				return fmt.Errorf("mutool cancelled: %w", ctx.Err())
+			}
 			return fmt.Errorf("mutool failed: %w: %s", err, strings.TrimSpace(string(out)))
 		}
 		return nil

@@ -46,13 +46,29 @@ func IsBlankImage(path string) (bool, error) {
 	}
 
 	const whiteCutoff = 240 // 0..255; any channel below this counts as content
-	const contentThreshold = 0.0015
+	// contentThreshold must stay conservative: a page is only declared blank
+	// when its content fraction is far below what even a sparse real page (a
+	// lone chapter title, a single page number, one short line) produces. A
+	// single line of text at typical rendering DPI covers on the order of 0.1%
+	// of the page, so anything at or above ~0.02% must be OCR'd, not skipped.
+	// Erring toward "not blank" only costs a wasted OCR call; erring the other
+	// way silently drops real text.
+	const contentThreshold = 0.0002
+	// minContentPixels guards small/low-resolution images where a fraction is
+	// noisy: even a handful of clearly-dark sampled pixels means real content.
+	const minContentPixels = 24
 
 	var sampled, content int
 	for y := b.Min.Y; y < b.Max.Y; y += stride {
 		for x := b.Min.X; x < b.Max.X; x += stride {
-			r, g, bl, _ := img.At(x, y).RGBA() // each 0..65535
+			r, g, bl, a := img.At(x, y).RGBA() // each 0..65535, alpha-premultiplied
 			sampled++
+			// RGBA() returns alpha-premultiplied values, so a transparent pixel
+			// reads as (0,0,0) and would be miscounted as dark content. Treat
+			// (near-)transparent pixels as blank/white regardless of RGB.
+			if a>>8 < whiteCutoff {
+				continue
+			}
 			if r>>8 < whiteCutoff || g>>8 < whiteCutoff || bl>>8 < whiteCutoff {
 				content++
 			}
@@ -60,6 +76,9 @@ func IsBlankImage(path string) (bool, error) {
 	}
 	if sampled == 0 {
 		return true, nil
+	}
+	if content >= minContentPixels {
+		return false, nil
 	}
 	return float64(content)/float64(sampled) < contentThreshold, nil
 }

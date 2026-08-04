@@ -245,6 +245,11 @@ func (p *progressEmitter) done(source string, pagesOK, pagesFailed int, manifest
 	}
 }
 
+// maxPageNumber caps the page numbers accepted by parsePages so a single spec
+// like "1-999999999" cannot balloon into a multi-gigabyte set before any PDF is
+// even inspected. Real documents never approach this bound.
+const maxPageNumber = 1_000_000
+
 // parsePages parses a page-set spec like "3,7,10-12" into a sorted, de-duplicated
 // slice of 1-based page numbers. An empty spec yields a nil slice (meaning "all
 // pages"). Ranges may be given low-high or high-low.
@@ -272,6 +277,9 @@ func parsePages(spec string) ([]int, error) {
 			if lo < 1 {
 				return nil, fmt.Errorf("page numbers must be >= 1: %q", part)
 			}
+			if hi > maxPageNumber {
+				return nil, fmt.Errorf("page number %d exceeds maximum %d: %q", hi, maxPageNumber, part)
+			}
 			for pg := lo; pg <= hi; pg++ {
 				set[pg] = true
 			}
@@ -282,6 +290,9 @@ func parsePages(spec string) ([]int, error) {
 			}
 			if pg < 1 {
 				return nil, fmt.Errorf("page numbers must be >= 1: %q", part)
+			}
+			if pg > maxPageNumber {
+				return nil, fmt.Errorf("page number %d exceeds maximum %d: %q", pg, maxPageNumber, part)
 			}
 			set[pg] = true
 		}

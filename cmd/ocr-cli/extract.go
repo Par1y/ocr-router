@@ -330,12 +330,15 @@ func extractPDF(
 ) (int, int, bool) {
 	totalPages, _ := renderer.CountPages(input)
 
-	// Build the list of pages to attempt this run.
-	var pageList []int
+	// Build the list of pages to attempt this run. Requested pages beyond the
+	// document length are kept aside so they can be recorded as failed rather
+	// than silently dropped — the manifest is the workbench's single source of
+	// truth and must account for every page it asked for.
+	var pageList, outOfRange []int
 	if len(opts.pages) > 0 {
 		for _, p := range opts.pages {
 			if totalPages > 0 && p > totalPages {
-				fmt.Fprintf(os.Stderr, "[extract] %s: skipping page %d (> %d pages)\n", base, p, totalPages)
+				outOfRange = append(outOfRange, p)
 				continue
 			}
 			pageList = append(pageList, p)
@@ -359,15 +362,27 @@ func extractPDF(
 	}, totalPages)
 
 	// Unknown page count with no explicit --pages: fall back to a serial,
-	// open-ended window sweep (rare; only when pdfinfo is unavailable).
-	if len(pageList) == 0 {
+	// open-ended window sweep (rare; only when pdfinfo is unavailable). When
+	// --pages was given but every requested page is out of range, we do NOT
+	// fall back here — those pages are recorded as failed below.
+	if totalPages == 0 && len(opts.pages) == 0 {
 		return extractPDFUnbounded(ctx, engine, providers, renderer, input, dir, base, manifestPath, opts, prog, mw, started)
 	}
 
-	attemptTotal := len(pageList)
+	attemptTotal := len(pageList) + len(outOfRange)
 	prog.start(filepath.Base(input), attemptTotal)
 
 	var done atomic.Int64
+
+	// Record out-of-range requested pages as failures in the manifest.
+	sourceFile := filepath.Base(input)
+	for _, p := range outOfRange {
+		msg := fmt.Sprintf("requested page %d exceeds document length (%d pages)", p, totalPages)
+		pj := &PageJSON{Page: p, Status: statusFailed, Error: &msg, SourceFile: sourceFile, Image: pageImageName(base, p)}
+		_ = writePageJSON(dir, base, p, pj)
+		mw.upsertPage(ManifestPage{Page: p, Status: statusFailed, File: pageJSONName(base, p), Error: &msg})
+		prog.page(p, statusFailed, 0, false, int(done.Add(1)), attemptTotal, msg)
+	}
 
 	// Partition into pages already done (skip-existing) and pages to OCR.
 	var todo []int
@@ -550,7 +565,7 @@ func markWindowFailed(
 	msg := rerr.Error()
 	for p := lo; p <= hi; p++ {
 		pj := &PageJSON{Page: p, Status: statusFailed, Error: &msg, SourceFile: sourceFile, Image: pageImageName(base, p)}
-		writePageJSON(dir, base, p, pj)
+		_ = writePageJSON(dir, base, p, pj)
 		mw.upsertPage(ManifestPage{Page: p, Status: statusFailed, File: pageJSONName(base, p), Error: &msg})
 		prog.page(p, statusFailed, 0, false, int(done.Add(1)), attemptTotal, msg)
 	}
@@ -578,9 +593,7 @@ func ocrPage(
 	if opts.blankSkip {
 		if blank, err := ocr.IsBlankImage(imagePath); err == nil && blank {
 			pj := &PageJSON{Page: page, Status: statusOK, Text: "", ScorePresent: false, Blank: true, SourceFile: sourceFile, Image: image}
-			writePageJSON(dir, base, page, pj)
-			mw.upsertPage(ManifestPage{Page: page, Status: statusOK, File: pageJSONName(base, page)})
-			prog.page(page, statusOK, 0, false, int(done.Add(1)), attemptTotal, "")
+			commitOKPage(mw, prog, done, attemptTotal, dir, base, page, pj, 0, false)
 			return
 		}
 	}
@@ -592,12 +605,12 @@ func ocrPage(
 		if ctx.Err() != nil {
 			cmsg := ctx.Err().Error()
 			pj := &PageJSON{Page: page, Status: statusCancelled, Error: &cmsg, SourceFile: sourceFile, Image: image}
-			writePageJSON(dir, base, page, pj)
+			_ = writePageJSON(dir, base, page, pj)
 			mw.upsertPage(ManifestPage{Page: page, Status: statusCancelled, File: pageJSONName(base, page), Error: &cmsg})
 			return
 		}
 		pj := &PageJSON{Page: page, Status: statusFailed, Error: &msg, SourceFile: sourceFile, Image: image}
-		writePageJSON(dir, base, page, pj)
+		_ = writePageJSON(dir, base, page, pj)
 		mw.upsertPage(ManifestPage{Page: page, Status: statusFailed, File: pageJSONName(base, page), Error: &msg})
 		prog.page(page, statusFailed, 0, false, int(done.Add(1)), attemptTotal, msg)
 		return
@@ -622,9 +635,7 @@ func ocrPage(
 		SourceFile:     sourceFile,
 		Image:          image,
 	}
-	writePageJSON(dir, base, page, pj)
-	mw.upsertPage(ManifestPage{Page: page, Status: statusOK, Score: score, File: pageJSONName(base, page)})
-	prog.page(page, statusOK, score, scorePresent, int(done.Add(1)), attemptTotal, "")
+	commitOKPage(mw, prog, done, attemptTotal, dir, base, page, pj, score, scorePresent)
 }
 
 // ocrRecognizeOne runs OCR for one page image via a specific provider or the
@@ -663,7 +674,7 @@ func extractPDFUnbounded(
 	sourceFile := filepath.Base(input)
 	var done atomic.Int64
 
-	_ = processPDFWithWindow(renderer, input, 0, 0, opts.window, 0, func(task FileTask) error {
+	runErr := processPDFWithWindow(ctx, renderer, input, 0, 0, opts.window, 0, func(task FileTask) error {
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
@@ -680,9 +691,20 @@ func extractPDFUnbounded(
 
 	ok, failed := mw.counts()
 	status := manifestOK
-	if ctx.Err() != nil {
+	switch {
+	case ctx.Err() != nil:
 		status = manifestCancelled
-	} else if failed > 0 {
+	case runErr != nil:
+		// A render/processing error aborted the sweep mid-document. The
+		// un-rendered tail was never OCR'd, so this run did NOT complete
+		// successfully: mark the manifest as errored, surface the cause, and
+		// report a failure so the process exit code is non-zero.
+		status = manifestError
+		fmt.Fprintf(os.Stderr, "[extract] %s: %v\n", base, runErr)
+		if failed == 0 {
+			failed = 1
+		}
+	case failed > 0:
 		status = manifestPartial
 	}
 	mw.finalize(status, started)
@@ -709,16 +731,45 @@ func readExistingPage(dir, base string, page int) (*PageJSON, bool) {
 	return &pj, true
 }
 
-// writePageJSON writes a per-page JSON atomically (temp file + rename).
-func writePageJSON(dir, base string, page int, pj *PageJSON) {
+// writePageJSON writes a per-page JSON atomically (temp file + rename). It
+// returns an error so callers writing a success page can downgrade it to a
+// failure rather than leave the manifest pointing at a file that isn't on disk.
+func writePageJSON(dir, base string, page int, pj *PageJSON) error {
 	data, err := json.MarshalIndent(pj, "", "  ")
 	if err != nil {
-		return
+		return err
 	}
 	path := filepath.Join(dir, pageJSONName(base, page))
 	tmp := path + ".tmp"
 	if err := os.WriteFile(tmp, data, 0644); err != nil {
+		return err
+	}
+	return os.Rename(tmp, path)
+}
+
+// commitOKPage writes a successful page's JSON and records it as ok. If the
+// write fails, the page is instead recorded as failed (best-effort re-write of
+// a failure stub) so the invariant "manifest status ok ⇒ file exists" holds.
+func commitOKPage(
+	mw *manifestWriter,
+	prog *progressEmitter,
+	done *atomic.Int64,
+	attemptTotal int,
+	dir, base string,
+	page int,
+	pj *PageJSON,
+	score float64,
+	scorePresent bool,
+) {
+	if err := writePageJSON(dir, base, page, pj); err != nil {
+		msg := fmt.Sprintf("failed to write page json: %v", err)
+		pj.Status = statusFailed
+		pj.Error = &msg
+		_ = writePageJSON(dir, base, page, pj)
+		mw.upsertPage(ManifestPage{Page: page, Status: statusFailed, File: pageJSONName(base, page), Error: &msg})
+		prog.page(page, statusFailed, 0, false, int(done.Add(1)), attemptTotal, msg)
 		return
 	}
-	_ = os.Rename(tmp, path)
+	mw.upsertPage(ManifestPage{Page: page, Status: statusOK, Score: score, File: pageJSONName(base, page)})
+	prog.page(page, statusOK, score, scorePresent, int(done.Add(1)), attemptTotal, "")
 }

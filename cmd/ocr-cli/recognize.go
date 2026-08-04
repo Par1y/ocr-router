@@ -124,7 +124,7 @@ var recognizeCmd = &cobra.Command{
 		var evalCount int       // number of pages that had an evaluation
 		var allAttempts []ocr.AttemptRecord
 
-		err = processPDFWithWindow(renderer, imagePath, first, last, win, totalPages, func(task FileTask) error {
+		err = processPDFWithWindow(cmd.Context(), renderer, imagePath, first, last, win, totalPages, func(task FileTask) error {
 			req.ImagePath = task.ImagePath
 			var r *ocr.OCRResult
 			var e error

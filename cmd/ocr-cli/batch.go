@@ -192,7 +192,7 @@ var batchCmd = &cobra.Command{
 				return nil
 			}
 
-			perr := processPDFWithWindow(renderer, pdf, 0, 0, window, totalPages, handlePage)
+			perr := processPDFWithWindow(ctx, renderer, pdf, 0, 0, window, totalPages, handlePage)
 			if perr != nil {
 				fmt.Fprintf(os.Stderr, "✗ %s: %s\n", filepath.Base(pdf), perr)
 				failed++

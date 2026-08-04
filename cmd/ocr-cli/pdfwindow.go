@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -23,6 +24,7 @@ type PageProcessFn func(task FileTask) error
 // while `--first`/`--last` let the caller restrict the range explicitly for
 // incremental/partial runs.
 func processPDFWithWindow(
+	ctx context.Context,
 	renderer *ocr.PDFRenderer,
 	pdfPath string,
 	first, last, window int,
@@ -31,6 +33,9 @@ func processPDFWithWindow(
 ) error {
 	if renderer == nil {
 		return fmt.Errorf("pdf support is disabled in config (pdf.enabled=false), cannot process %q", pdfPath)
+	}
+	if ctx == nil {
+		ctx = context.Background()
 	}
 	if window < 1 {
 		window = 1
@@ -52,13 +57,18 @@ func processPDFWithWindow(
 	base = base[:len(base)-len(filepath.Ext(base))]
 
 	for cur := first; hi <= 0 || cur <= hi; {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		wEnd := cur + window - 1
 		if hi > 0 && wEnd > hi {
 			wEnd = hi
 		}
 
 		// Render this window only. tmp dir is removed before the next window.
-		pages, tmp, err := renderer.Render(pdfPath, cur, wEnd)
+		// RenderContext ties the child rasterizer to ctx so cancellation kills
+		// it promptly instead of waiting for the current window to finish.
+		pages, tmp, err := renderer.RenderContext(ctx, pdfPath, cur, wEnd)
 		if err != nil {
 			return fmt.Errorf("render %q pages %d-%d: %w", pdfPath, cur, wEnd, err)
 		}

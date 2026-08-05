@@ -63,13 +63,15 @@ func IsBlankImage(path string) (bool, error) {
 		for x := b.Min.X; x < b.Max.X; x += stride {
 			r, g, bl, a := img.At(x, y).RGBA() // each 0..65535, alpha-premultiplied
 			sampled++
-			// RGBA() returns alpha-premultiplied values, so a transparent pixel
-			// reads as (0,0,0) and would be miscounted as dark content. Treat
-			// (near-)transparent pixels as blank/white regardless of RGB.
-			if a>>8 < whiteCutoff {
-				continue
-			}
-			if r>>8 < whiteCutoff || g>>8 < whiteCutoff || bl>>8 < whiteCutoff {
+			// RGBA() returns alpha-premultiplied values. Composite the pixel over
+			// a white background (documents are white) so transparency is handled
+			// correctly: out = premult + white*(1-alpha) = premult + (0xffff-a).
+			// A transparent pixel becomes white (not dark), while genuinely dark
+			// content on a semi-transparent image still reads as dark — avoiding
+			// both the "transparent counts as content" bug and the opposite
+			// "semi-transparent text silently dropped" bug.
+			inv := 0xffff - a
+			if (r+inv)>>8 < whiteCutoff || (g+inv)>>8 < whiteCutoff || (bl+inv)>>8 < whiteCutoff {
 				content++
 			}
 		}

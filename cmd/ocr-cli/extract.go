@@ -690,6 +690,7 @@ func extractPDFUnbounded(
 	})
 
 	ok, failed := mw.counts()
+	retFailed := failed
 	status := manifestOK
 	switch {
 	case ctx.Err() != nil:
@@ -697,19 +698,20 @@ func extractPDFUnbounded(
 	case runErr != nil:
 		// A render/processing error aborted the sweep mid-document. The
 		// un-rendered tail was never OCR'd, so this run did NOT complete
-		// successfully: mark the manifest as errored, surface the cause, and
-		// report a failure so the process exit code is non-zero.
+		// successfully: mark the manifest as errored and surface the cause.
+		// The manifest's page list stays truthful (no phantom failed page);
+		// retFailed is bumped only to force a non-zero process exit code.
 		status = manifestError
 		fmt.Fprintf(os.Stderr, "[extract] %s: %v\n", base, runErr)
-		if failed == 0 {
-			failed = 1
+		if retFailed == 0 {
+			retFailed = 1
 		}
 	case failed > 0:
 		status = manifestPartial
 	}
 	mw.finalize(status, started)
 	prog.done(filepath.Base(input), ok, failed, manifestPath)
-	return ok, failed, true
+	return ok, retFailed, true
 }
 
 // --- small on-disk helpers -------------------------------------------------
@@ -742,9 +744,14 @@ func writePageJSON(dir, base string, page int, pj *PageJSON) error {
 	path := filepath.Join(dir, pageJSONName(base, page))
 	tmp := path + ".tmp"
 	if err := os.WriteFile(tmp, data, 0644); err != nil {
+		os.Remove(tmp) // don't leak a partial temp file
 		return err
 	}
-	return os.Rename(tmp, path)
+	if err := os.Rename(tmp, path); err != nil {
+		os.Remove(tmp) // rename failed; remove the orphaned temp file
+		return err
+	}
+	return nil
 }
 
 // commitOKPage writes a successful page's JSON and records it as ok. If the

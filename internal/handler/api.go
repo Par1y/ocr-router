@@ -1,3 +1,5 @@
+// Package handler exposes the HTTP surface of ocr-router: the JSON API
+// (api.go) and the server-rendered WebUI (webui.go).
 package handler
 
 import (

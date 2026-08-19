@@ -42,15 +42,10 @@ type PageImage struct {
 //  2. a binary shipped in the project's ./bin directory,
 //  3. any directory on PATH.
 //
-// resolveBinary finds the absolute path of a tool in this priority order:
-//  1. explicit config override (BinPath / InfoBinPath),
-//  2. a binary shipped in the project's ./bin directory,
-//  3. any directory on PATH.
-//
 // Candidate paths must resolve to an executable regular file; otherwise the
 // candidate is skipped so a corrupt/leftover file in ./bin does not produce a
 // confusing fork/exec error and the next candidate is tried instead.
-// notFoundMsg formats a helpful, install-oriented message when nothing is found.
+// missingToolMsg formats a helpful, install-oriented message when nothing is found.
 func (r *PDFRenderer) resolveBinary(name, override string) (string, error) {
 	// 1. Explicit override: trust the user but still require it to be executable.
 	if override != "" {
@@ -206,10 +201,8 @@ func (r *PDFRenderer) resolveTool() (name string, bin string, err error) {
 // first/last narrow the page range (1-based, 0 = unbounded); cfg.MaxPages
 // is applied afterwards in collectPages-style trimming as a safety cap.
 func (r *PDFRenderer) renderWith(ctx context.Context, name, bin, pdfPath, tmpDir string, first, last int) error {
+	// DPI is guaranteed positive by config.setDefaults.
 	dpi := r.cfg.DPI
-	if dpi <= 0 {
-		dpi = 200
-	}
 	prefix := filepath.Join(tmpDir, "page")
 	outPrefix := prefix + "-"
 

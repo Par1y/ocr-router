@@ -1,3 +1,7 @@
+// Package ocr contains the OCR core: the Provider interface and its
+// implementations (nvidia.go, llm_vision.go, browser_sse.go), the quality
+// Evaluator, the FallbackEngine, image encoding helpers, and the PDF
+// rasterization pipeline (pdf.go, pdf_dispatch.go).
 package ocr
 
 import (

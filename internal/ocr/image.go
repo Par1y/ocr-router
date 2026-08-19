@@ -14,9 +14,14 @@ import (
 )
 
 const (
+	// DefaultMaxB64Len caps the base64 payload sent to providers. NVIDIA's
+	// OCR API rejects larger bodies, so oversized images are re-encoded
+	// (see compressExact) to fit under this limit.
 	DefaultMaxB64Len = 180_000
 )
 
+// mimeMap maps a lowercase file extension to its MIME type. Extensions not
+// listed here fall back to "image/png" in DetectMIME.
 var mimeMap = map[string]string{
 	".png":  "image/png",
 	".jpg":  "image/jpeg",

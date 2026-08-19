@@ -16,6 +16,8 @@ import (
 	"ocr-router/internal/ocr"
 )
 
+// batchCmd implements `ocr-cli batch <dir>`: concurrent OCR over every image
+// in a directory plus sliding-window processing for each PDF found.
 var batchCmd = &cobra.Command{
 	Use:   "batch [directory]",
 	Short: "Batch OCR recognition",
@@ -219,12 +221,15 @@ func init() {
 	batchCmd.Flags().Int("window", 0, "PDF sliding-window size (overrides pdf.window_size; default 20)")
 }
 
+// processResult is one file's outcome reported back to the batch summary:
+// output is the written .txt path on success; err is set on failure.
 type processResult struct {
 	file   string
 	output string
 	err    error
 }
 
+// processImage OCRs one file, deriving the output name from imagePath.
 func processImage(ctx context.Context, engine *ocr.FallbackEngine, provider, imagePath, outputDir string, current, total int, saveJSON bool) *processResult {
 	return processImageNamed(ctx, engine, provider, imagePath, outputDir, current, total, saveJSON, "")
 }
@@ -314,6 +319,8 @@ func processImageNamed(ctx context.Context, engine *ocr.FallbackEngine, provider
 	}
 }
 
+// findImages lists the supported image/PDF files in dir, optionally
+// recursing. Extension matching is case-insensitive.
 func findImages(dir string, recursive bool) ([]string, error) {
 	var images []string
 	extensions := map[string]bool{

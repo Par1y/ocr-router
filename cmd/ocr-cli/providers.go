@@ -13,6 +13,8 @@ import (
 	"ocr-router/internal/ocr"
 )
 
+// providersCmd implements `ocr-cli providers`: lists the enabled providers
+// with a live health check and per-provider latency.
 var providersCmd = &cobra.Command{
 	Use:   "providers",
 	Short: "List OCR providers",

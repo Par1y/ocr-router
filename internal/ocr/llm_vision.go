@@ -124,15 +124,11 @@ func (p *LLMVisionProvider) recognizeImage(ctx context.Context, req *OCRRequest)
 		},
 	}
 
-	maxTokens := p.config.MaxTokens
-	if maxTokens == 0 {
-		maxTokens = 4096
-	}
-
+	// MaxTokens is guaranteed non-zero by config.setDefaults.
 	llmReq := LLMVisionRequest{
 		Model:     p.config.Model,
 		Messages:  messages,
-		MaxTokens: maxTokens,
+		MaxTokens: p.config.MaxTokens,
 	}
 
 	// Marshal request

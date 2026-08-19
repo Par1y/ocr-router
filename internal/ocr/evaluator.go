@@ -36,7 +36,8 @@ type EvaluationResponse struct {
 	Choices []Choice `json:"choices"`
 }
 
-// EvaluationResult represents the parsed evaluation result
+// EvaluationResultParsed mirrors the JSON the evaluator LLM is prompted to
+// return. It is converted into the public EvaluationResult by doEvaluate.
 type EvaluationResultParsed struct {
 	Score    float64            `json:"score"`
 	Reason   string             `json:"reason"`
@@ -108,15 +109,11 @@ func (e *Evaluator) doEvaluate(ctx context.Context, ocrResult string) (*Evaluati
 		},
 	}
 
-	maxTokens := e.config.MaxTokens
-	if maxTokens <= 0 {
-		maxTokens = 4096
-	}
-
+	// MaxTokens is guaranteed non-zero by config.setDefaults.
 	evalReq := EvaluationRequest{
 		Model:          e.config.Model,
 		Messages:       messages,
-		MaxTokens:      maxTokens,
+		MaxTokens:      e.config.MaxTokens,
 		ReasoningEffort: e.config.ReasoningEffort,
 	}
 

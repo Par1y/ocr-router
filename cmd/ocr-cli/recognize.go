@@ -15,6 +15,9 @@ import (
 	"ocr-router/internal/ocr"
 )
 
+// recognizeCmd implements `ocr-cli recognize <file>`: single-file OCR for
+// images and PDFs. PDFs are processed through the sliding-window pipeline
+// (see pdfwindow.go), one progress line per page.
 var recognizeCmd = &cobra.Command{
 	Use:   "recognize [file path]",
 	Short: "Recognize text in an image or PDF",
@@ -196,6 +199,8 @@ var recognizeCmd = &cobra.Command{
 	},
 }
 
+// baseName returns p's filename without directory or extension. It is used as
+// the output file basename, e.g. "/a/b/001.png" -> "001".
 func baseName(p string) string {
 	n := p
 	for i := len(p) - 1; i >= 0; i-- {
@@ -292,6 +297,9 @@ func saveOCRResult(result *ocr.OCRResult, outputDir, baseName string, saveJSON b
 	return nil
 }
 
+// createProviders instantiates every provider enabled in cfg, keyed by its
+// registry name ("nvidia", "llm_vision", "browser_sse"). Shared by all CLI
+// commands so provider wiring lives in exactly one place.
 func createProviders(cfg *config.Config, log *logger.Logger) map[string]ocr.Provider {
 	// Build the optional PDF renderer. We pass the same instance to every
 	// provider so tool detection runs only once. The renderer is stateless.

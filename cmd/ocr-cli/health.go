@@ -12,6 +12,8 @@ import (
 	"ocr-router/internal/ocr"
 )
 
+// healthCmd implements `ocr-cli health`: runs a HealthCheck against every
+// enabled provider and reports the result as a text table or JSON map.
 var healthCmd = &cobra.Command{
 	Use:   "health",
 	Short: "Check system health",

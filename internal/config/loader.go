@@ -9,6 +9,8 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+// Load reads a YAML config file, expands ${ENV_VAR} references, applies
+// defaults, and returns the resulting Config.
 func Load(path string) (*Config, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -29,6 +31,9 @@ func Load(path string) (*Config, error) {
 	return &cfg, nil
 }
 
+// expandEnvVars substitutes ${VAR} with the environment value, leaving the
+// reference untouched when the variable is unset so a later misconfiguration
+// surfaces as an API error rather than a silent empty string.
 func expandEnvVars(s string) string {
 	return os.Expand(s, func(key string) string {
 		if val, ok := os.LookupEnv(key); ok {
@@ -38,6 +43,10 @@ func expandEnvVars(s string) string {
 	})
 }
 
+// setDefaults fills zero-valued fields with the built-in defaults. It is the
+// single source of truth for defaults on the code side: provider call sites
+// must not re-implement fallbacks (e.g. an inline `if maxTokens == 0`), so the
+// values kept here stay consistent with config.yaml.example.
 func setDefaults(cfg *Config) {
 	if cfg.Server.Host == "" {
 		cfg.Server.Host = "0.0.0.0"
@@ -56,7 +65,7 @@ func setDefaults(cfg *Config) {
 	if cfg.Providers.NVIDIA.Endpoint == "" {
 		cfg.Providers.NVIDIA.Endpoint = "https://ai.api.nvidia.com/v1/cv/nvidia/nemotron-ocr-v2"
 	}
-	if cfg.Providers.NVIDIA.MaxB64Len == 0 {
+	if cfg.Providers.NVIDIA.MaxB64Len <= 0 {
 		cfg.Providers.NVIDIA.MaxB64Len = 180000
 	}
 
@@ -67,8 +76,9 @@ func setDefaults(cfg *Config) {
 	if cfg.Providers.LLMVision.Prompt == "" {
 		cfg.Providers.LLMVision.Prompt = "Extract all text from this image. Return only the text content."
 	}
-	if cfg.Providers.LLMVision.MaxTokens == 0 {
-		cfg.Providers.LLMVision.MaxTokens = 4096
+	if cfg.Providers.LLMVision.MaxTokens <= 0 {
+		// Reasoning-style models need headroom for reasoning + content.
+		cfg.Providers.LLMVision.MaxTokens = 16384
 	}
 
 	// Evaluator defaults
@@ -86,6 +96,10 @@ func setDefaults(cfg *Config) {
 	}
 	if cfg.Evaluator.Model == "" {
 		cfg.Evaluator.Model = "step-router-v1"
+	}
+	if cfg.Evaluator.MaxTokens <= 0 {
+		// Reasoning-style models need headroom for reasoning + content.
+		cfg.Evaluator.MaxTokens = 16384
 	}
 
 	// Fallback defaults
@@ -119,16 +133,16 @@ func setDefaults(cfg *Config) {
 	}
 
 	// PDF defaults
-	if cfg.PDF.DPI == 0 {
+	if cfg.PDF.DPI <= 0 {
 		cfg.PDF.DPI = 200
 	}
 	if cfg.PDF.Format == "" {
 		cfg.PDF.Format = "png"
 	}
-	if cfg.PDF.JPEGQuality == 0 {
+	if cfg.PDF.JPEGQuality <= 0 {
 		cfg.PDF.JPEGQuality = 85
 	}
-	if cfg.PDF.WindowSize == 0 {
+	if cfg.PDF.WindowSize <= 0 {
 		cfg.PDF.WindowSize = 20
 	}
 

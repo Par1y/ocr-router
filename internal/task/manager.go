@@ -1,3 +1,6 @@
+// Package task implements the in-memory async OCR task queue: a fixed worker
+// pool consuming submitted OCRRequests through the fallback engine. Task state
+// lives only for the lifetime of the process.
 package task
 
 import (

@@ -13,12 +13,16 @@ import (
 	"time"
 )
 
+// taskCmd is the umbrella for `task list` and `task status`, which inspect
+// the local async task queue. Note the queue is in-memory, so these commands
+// only see tasks submitted within the same process run.
 var taskCmd = &cobra.Command{
 	Use:   "task",
 	Short: "Manage OCR tasks",
 	Long:  "Manage async OCR tasks.",
 }
 
+// taskListCmd implements `task list [--status ...]`.
 var taskListCmd = &cobra.Command{
 	Use:   "list",
 	Short: "List tasks",
@@ -90,6 +94,8 @@ var taskListCmd = &cobra.Command{
 	},
 }
 
+// taskStatusCmd implements `task status <task-id>`, printing the full task
+// record including result text when completed.
 var taskStatusCmd = &cobra.Command{
 	Use:   "status [task-id]",
 	Short: "Get task status",

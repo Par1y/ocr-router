@@ -18,6 +18,8 @@ import (
 	"ocr-router/internal/task"
 )
 
+// serveCmd implements `ocr-cli serve`: runs the HTTP API + WebUI server until
+// SIGINT/SIGTERM, then shuts down gracefully within a 30s window.
 var serveCmd = &cobra.Command{
 	Use:   "serve",
 	Short: "Start HTTP server",

@@ -1,3 +1,6 @@
+// Package storage persists OCR results: the Storage interface plus a
+// filesystem-backed implementation (file.go) writing formatted .txt and
+// structured .json files under a base directory.
 package storage
 
 import (

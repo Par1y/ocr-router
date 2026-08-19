@@ -1,3 +1,7 @@
+// Package logger provides a small leveled logger writing JSON or plain text
+// to stdout and optionally a file. The Log* helpers emit the structured
+// domain events (fallback, quality check, evaluation retry) used by the OCR
+// pipeline.
 package logger
 
 import (

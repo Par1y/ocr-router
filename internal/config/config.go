@@ -1,7 +1,10 @@
+// Package config loads config.yaml into typed structs, expanding ${ENV_VAR}
+// references and applying defaults (see loader.go).
 package config
 
 import "time"
 
+// Config is the root configuration, mapped 1:1 to config.yaml.
 type Config struct {
 	Server    ServerConfig    `yaml:"server"`
 	Storage   StorageConfig   `yaml:"storage"`
@@ -40,22 +43,29 @@ type PDFConfig struct {
 	WindowSize int `yaml:"window_size"`
 }
 
+// ServerConfig controls the HTTP server bind address.
 type ServerConfig struct {
 	Host string `yaml:"host"`
 	Port int    `yaml:"port"`
 }
 
+// StorageConfig controls where and how OCR results are persisted.
+// Format is one of "text", "json", "both".
 type StorageConfig struct {
 	BaseDir string `yaml:"base_dir"`
 	Format  string `yaml:"format"` // text, json, both
 }
 
+// ProvidersConfig holds one entry per supported OCR provider.
 type ProvidersConfig struct {
 	NVIDIA     ProviderConfig `yaml:"nvidia"`
 	LLMVision  ProviderConfig `yaml:"llm_vision"`
 	BrowserSSE ProviderConfig `yaml:"browser_sse"`
 }
 
+// ProviderConfig is the shared per-provider block. Not all fields apply to
+// every provider type: BrowserSSE uses BaseURL/Endpoints/Headers, the API
+// providers use APIKey/Endpoint/Model, etc.
 type ProviderConfig struct {
 	Type        string            `yaml:"type"`
 	Enabled     bool              `yaml:"enabled"`
@@ -70,6 +80,8 @@ type ProviderConfig struct {
 	Headers     map[string]string `yaml:"headers"`
 }
 
+// EvaluatorConfig configures the independent LLM that scores OCR quality.
+// OCR results at or above Threshold are accepted without fallback.
 type EvaluatorConfig struct {
 	Enabled        bool          `yaml:"enabled"`
 	Endpoint       string        `yaml:"endpoint"`
@@ -84,6 +96,8 @@ type EvaluatorConfig struct {
 	ReasoningEffort string       `yaml:"reasoning_effort,omitempty"`
 }
 
+// FallbackConfig configures the provider fallback engine: try order and how
+// long to wait between attempts.
 type FallbackConfig struct {
 	Strategy    string             `yaml:"strategy"` // sequential, random
 	MaxRetries  int                `yaml:"max_retries"`
@@ -91,18 +105,23 @@ type FallbackConfig struct {
 	Providers   []ProviderPriority `yaml:"providers"`
 }
 
+// ProviderPriority is one entry in the fallback chain. Lower Priority runs
+// first under the sequential strategy.
 type ProviderPriority struct {
 	Name     string `yaml:"name"`
 	Priority int    `yaml:"priority"`
 	Enabled  bool   `yaml:"enabled"`
 }
 
+// TaskConfig tunes the async task queue used by the HTTP server.
 type TaskConfig struct {
 	Workers      int           `yaml:"workers"`
 	QueueSize    int           `yaml:"queue_size"`
 	TaskTimeout  time.Duration `yaml:"task_timeout"`
 }
 
+// LoggingConfig selects log verbosity, optional sink file, and output format
+// ("json" or text).
 type LoggingConfig struct {
 	Level       string `yaml:"level"`
 	File        string `yaml:"file"`
